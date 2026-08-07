@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/orion-api",
+    "crates/orion-domain",
+    "crates/orion-db",
+    "crates/orion-redis",
+    "crates/orion-worker",
+    "crates/orion-common"
+]
+resolver = "2"
