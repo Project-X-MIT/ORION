@@ -1,12 +1,16 @@
-<<<<<<< HEAD
-=======
 pub mod leaderboard;
+pub mod learning;
+pub mod news;
 pub mod profile;
 pub mod quiz_attempt;
 pub mod quiz_question;
 pub mod rating;
 
 pub use leaderboard::{LeaderboardEntry, LeaderboardRankHistory};
+pub use learning::{
+    CourseCompletion, CourseLesson, CourseModule, CourseProgress, ModuleCompletion,
+};
+pub use news::{NewsArticle, NewsIngestionRun, NewsSource};
 pub use profile::{Profile, ProfileStatistics};
 pub use quiz_attempt::{
     AdvancedSettlementInput, BasicSettlementInput, NewQuizAttempt, QuizAnswer, QuizAttempt,
@@ -17,4 +21,3 @@ pub use quiz_question::{
     QuizQuestionWithOptions, QuizType,
 };
 pub use rating::{QuestionRating, RatingEvent, UserRating, DEFAULT_RATING};
->>>>>>> c9a455b (#2 [DB] Build Quiz, Elo Rating & Atomic Settlement Persistence)
