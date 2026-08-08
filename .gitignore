@@ -11,6 +11,9 @@
 target/
 **/*.rs.bk
 
+# Local test tooling and PostgreSQL runtime
+.tools/
+
 # Node/Frontend
 node_modules/
 dist/
