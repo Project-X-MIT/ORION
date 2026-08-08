@@ -1,0 +1,15 @@
+[package]
+name = "orion-db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "uuid",
+    "macros",
+] }
+uuid = { version = "1", features = ["serde", "v4"] }
