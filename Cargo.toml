@@ -1,3 +1,22 @@
+[package]
+name = "orion-integration"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
 [workspace]
 members = ["crates/orion-db"]
 resolver = "2"
+
+[dependencies]
+orion-db = { path = "crates/orion-db" }
+
+[dev-dependencies]
+serde_json = "1"
+sqlx = { version = "0.8.6", default-features = false, features = ["chrono", "json", "macros", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4"] }
+
+[[test]]
+name = "research"
+path = "tests/integration/research.rs"

@@ -5,6 +5,7 @@ pub mod profile;
 pub mod quiz_attempt;
 pub mod quiz_question;
 pub mod rating;
+pub mod research;
 
 pub use leaderboard::{LeaderboardEntry, LeaderboardRankHistory};
 pub use learning::{
@@ -21,3 +22,8 @@ pub use quiz_question::{
     QuizQuestionWithOptions, QuizType,
 };
 pub use rating::{QuestionRating, RatingEvent, UserRating, DEFAULT_RATING};
+pub use research::{
+    InvalidResearchPaperStatus, InvalidReviewRecommendation, NewResearchPaper, NewResearchReview,
+    PaperStatus, ResearchPaper, ResearchPaperStatus, ResearchReview, ResearchStatus,
+    ReviewRecommendation,
+};

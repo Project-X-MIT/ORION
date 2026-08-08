@@ -754,6 +754,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orion-integration"
+version = "0.1.0"
+dependencies = [
+ "orion-db",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
