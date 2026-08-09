@@ -1368,6 +1368,7 @@ name = "orion-db"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "orion-domain",
  "sqlx",
  "thiserror",
  "tokio",
