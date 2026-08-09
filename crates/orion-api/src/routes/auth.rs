@@ -400,10 +400,56 @@ fn rate_limited(request_id: orion_common::RequestId) -> ApiProblem {
 mod tests {
     use super::{
         hash_password, normalize_email, normalize_username, session_id_from_headers,
-        verify_password,
+        verify_password, AuthenticatedUser,
     };
-    use axum::http::{header, HeaderMap, HeaderValue};
+    use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+    use chrono::Utc;
+    use orion_common::ErrorCode;
+    use orion_db::models::User;
+    use orion_domain::{Identity, Role, UserId};
     use uuid::Uuid;
+
+    fn authenticated_user(role: Role) -> AuthenticatedUser {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        AuthenticatedUser {
+            user: User {
+                id,
+                email: "user@example.com".to_owned(),
+                username: "orion-user".to_owned(),
+                password_hash: "not-used-by-authorization".to_owned(),
+                display_name: None,
+                bio: None,
+                avatar_url: None,
+                status: "active".to_owned(),
+                email_verified_at: None,
+                disabled_at: None,
+                deleted_at: None,
+                created_at: now,
+                updated_at: now,
+            },
+            identity: Identity {
+                user_id: UserId::from_uuid(id),
+                role,
+            },
+        }
+    }
+
+    #[test]
+    fn authorization_allows_required_or_admin_roles_and_rejects_others() {
+        assert!(authenticated_user(Role::Reviewer)
+            .require_role(Role::Reviewer)
+            .is_ok());
+        assert!(authenticated_user(Role::Admin)
+            .require_role(Role::Reviewer)
+            .is_ok());
+
+        let forbidden = authenticated_user(Role::User)
+            .require_role(Role::Reviewer)
+            .expect_err("a user must not receive reviewer access");
+        assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+        assert_eq!(forbidden.code, ErrorCode::Forbidden);
+    }
 
     #[test]
     fn normalizes_login_identifiers() {
