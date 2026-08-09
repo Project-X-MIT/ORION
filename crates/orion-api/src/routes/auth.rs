@@ -4,7 +4,6 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use async_trait::async_trait;
 use axum::{
     extract::{FromRequestParts, Json, State},
     http::{header, request::Parts, HeaderMap, HeaderValue, StatusCode},
@@ -76,7 +75,6 @@ impl AuthenticatedUser {
     }
 }
 
-#[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = ApiProblem;
 

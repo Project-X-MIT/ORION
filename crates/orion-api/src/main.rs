@@ -1,4 +1,3 @@
-fn main() {}
 use anyhow::Context;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
