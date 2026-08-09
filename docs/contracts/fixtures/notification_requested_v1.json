@@ -1,0 +1,16 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000020",
+  "event_type": "orion.notification.requested",
+  "schema_version": 1,
+  "occurred_at": "2026-08-09T12:00:00Z",
+  "producer": "orion-api",
+  "payload": {
+    "notification_id": "00000000-0000-0000-0000-000000000021",
+    "recipient_id": "00000000-0000-0000-0000-000000000012",
+    "kind": "rating_changed",
+    "title": "Rating updated",
+    "body": "Your rating increased by 16.",
+    "action_url": "/profile",
+    "deduplication_key": "rating-entry:00000000-0000-0000-0000-000000000011"
+  }
+}

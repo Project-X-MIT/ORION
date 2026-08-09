@@ -1,0 +1,16 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000010",
+  "event_type": "orion.rating.updated",
+  "schema_version": 1,
+  "occurred_at": "2026-08-09T12:00:00Z",
+  "producer": "orion-worker",
+  "payload": {
+    "rating_entry_id": "00000000-0000-0000-0000-000000000011",
+    "user_id": "00000000-0000-0000-0000-000000000012",
+    "previous_rating": 1500,
+    "current_rating": 1516,
+    "delta": 16,
+    "reason": "basic_quiz",
+    "source_id": "00000000-0000-0000-0000-000000000013"
+  }
+}
