@@ -3,7 +3,7 @@
 //! Feature owners expose isolated routers; application assembly remains here.
 
 use axum::{
-    http::HeaderMap,
+    http::{HeaderMap, Request},
     response::{IntoResponse, Response},
     Router,
 };
@@ -153,7 +153,20 @@ pub fn app(state: state::AppState) -> Router {
             ServiceBuilder::new()
                 .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
                 .layer(PropagateRequestIdLayer::x_request_id())
-                .layer(TraceLayer::new_for_http())
+                .layer(
+                    TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                        let request_id = request
+                            .headers()
+                            .get("x-request-id")
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| Uuid::parse_str(value).ok());
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            request_id = ?request_id,
+                        )
+                    }),
+                )
                 .layer(cors)
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,

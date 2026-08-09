@@ -163,7 +163,7 @@ async fn register(
         )
         .await
         .map_err(|error| ApiProblem::from(error).with_request_id(request_id))?;
-    tracing::info!(user_id = %user.id, event = "auth.register");
+    tracing::info!(request_id = %request_id, event = "auth.register");
     Ok(with_session_cookie(
         crate::success(
             &headers,
@@ -215,7 +215,7 @@ async fn login(
         )
         .await
         .map_err(|error| ApiProblem::from(error).with_request_id(request_id))?;
-    tracing::info!(user_id = %user.id, event = "auth.login");
+    tracing::info!(request_id = %request_id, event = "auth.login");
     Ok(with_session_cookie(
         crate::success(
             &headers,
@@ -241,7 +241,7 @@ async fn logout(
             .await
             .map_err(|error| ApiProblem::from(error).with_request_id(request_id))?;
     }
-    tracing::info!(user_id = %_user.user.id, event = "auth.logout");
+    tracing::info!(request_id = %request_id, event = "auth.logout");
     let mut response =
         crate::success(&headers, serde_json::json!({ "logged_out": true })).into_response();
     response
