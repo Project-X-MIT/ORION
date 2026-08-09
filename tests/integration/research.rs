@@ -1,59 +1,71 @@
 use std::{env, error::Error};
 
-use orion_db::{models::ResearchPaperStatus, repositories::ResearchRepository};
+use orion_db::{models::ResearchPaperStatus, pool as db_pool, repositories::ResearchRepository};
 use serde_json::json;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
-async fn test_pool() -> Result<PgPool, Box<dyn Error>> {
-    let database_url = env::var("DATABASE_URL")
-        .map_err(|_| "DATABASE_URL must point to the isolated PostgreSQL test database")?;
+struct TestDatabase {
+    pool: PgPool,
+    admin: PgPool,
+    schema: String,
+}
 
-    let pool = PgPoolOptions::new()
-        .max_connections(8)
-        .connect(&database_url)
-        .await?;
+impl TestDatabase {
+    async fn create() -> Result<Option<Self>, Box<dyn Error>> {
+        let database_url = match env::var("ORION_TEST_DATABASE_URL")
+            .or_else(|_| env::var("DATABASE_URL"))
+        {
+            Ok(database_url) => database_url,
+            Err(_) => {
+                eprintln!("Skipping research integration test: no PostgreSQL test URL configured");
+                return Ok(None);
+            }
+        };
+        let admin = db_pool::connect(&database_url).await?;
+        let schema = format!("orion_research_{}", Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await?;
 
-    // The scaffold has no users or ratings migration yet.  Create the two
-    // prerequisite tables explicitly, then apply every tracked migration.
-    for statement in [
-        "DROP TABLE IF EXISTS research_reviews CASCADE",
-        "DROP TABLE IF EXISTS research_papers CASCADE",
-        "DROP TABLE IF EXISTS user_ratings CASCADE",
-        "DROP TABLE IF EXISTS users CASCADE",
-        "DROP TABLE IF EXISTS leaderboard_rank_history CASCADE",
-        "DROP TABLE IF EXISTS _sqlx_migrations CASCADE",
-    ] {
-        sqlx::query(statement).execute(&pool).await?;
+        let search_path = format!("SET search_path TO {schema}, public");
+        let pool = PgPoolOptions::new()
+            .max_connections(8)
+            .after_connect(move |connection, _metadata| {
+                let search_path = search_path.clone();
+                Box::pin(async move {
+                    sqlx::query(&search_path)
+                        .execute(connection)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect(&database_url)
+            .await?;
+        db_pool::migrate(&pool).await?;
+        Ok(Some(Self {
+            pool,
+            admin,
+            schema,
+        }))
     }
 
-    sqlx::query(
-        "CREATE TABLE users (
-            id UUID PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE
-        )",
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query(
-        "CREATE TABLE user_ratings (
-            user_id UUID PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
-            rating INTEGER NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await?;
-
-    sqlx::migrate!("crates/orion-db/migrations")
-        .run(&pool)
-        .await?;
-    Ok(pool)
+    async fn cleanup(self) -> Result<(), Box<dyn Error>> {
+        self.pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
+            .execute(&self.admin)
+            .await?;
+        self.admin.close().await;
+        Ok(())
+    }
 }
 
 async fn insert_user(pool: &PgPool, user_id: Uuid, username: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO users (id, username) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO users (id, email, username, password_hash) VALUES ($1, $2, $3, $4)")
         .bind(user_id)
+        .bind(format!("{username}@research.test"))
         .bind(username)
+        .bind("$argon2id$research-integration-test")
         .execute(pool)
         .await?;
     Ok(())
@@ -61,7 +73,10 @@ async fn insert_user(pool: &PgPool, user_id: Uuid, username: &str) -> Result<(),
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> {
-    let pool = test_pool().await?;
+    let Some(database) = TestDatabase::create().await? else {
+        return Ok(());
+    };
+    let pool = database.pool.clone();
     let repository = ResearchRepository::new(pool.clone());
     let author_id = Uuid::new_v4();
     let reviewer_id = Uuid::new_v4();
@@ -426,6 +441,6 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .is_empty());
 
-    pool.close().await;
+    database.cleanup().await?;
     Ok(())
 }
