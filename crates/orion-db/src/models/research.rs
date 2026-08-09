@@ -90,6 +90,7 @@ pub struct ResearchPaper {
     pub published_at: Option<DateTime<Utc>>,
     pub evaluation_score: Option<f64>,
     pub evaluation_result: Option<sqlx::types::JsonValue>,
+    /// Outcome recorded by Yash's Elo consumer; Phantom does not calculate it.
     pub elo_award: Option<i32>,
     pub elo_awarded: bool,
     pub elo_awarded_at: Option<DateTime<Utc>>,

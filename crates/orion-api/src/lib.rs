@@ -14,6 +14,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 pub mod config;
+pub mod middleware;
 pub mod routes;
 pub mod state;
 
@@ -121,11 +122,10 @@ pub fn success<T: Serialize>(headers: &HeaderMap, data: T) -> axum::Json<ApiSucc
     axum::Json(ApiSuccess::new(request_id(headers), data))
 }
 
-#[must_use]
 pub fn app(state: state::AppState) -> Router {
     use tower::ServiceBuilder;
     use tower_http::{
-        cors::{AllowOrigin, CorsLayer},
+        cors::{AllowOrigin, Any, CorsLayer},
         request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
         timeout::TimeoutLayer,
         trace::TraceLayer,
@@ -154,7 +154,10 @@ pub fn app(state: state::AppState) -> Router {
                 .layer(PropagateRequestIdLayer::x_request_id())
                 .layer(TraceLayer::new_for_http())
                 .layer(cors)
-                .layer(TimeoutLayer::new(state.config.request_timeout)),
+                .layer(TimeoutLayer::with_status_code(
+                    axum::http::StatusCode::REQUEST_TIMEOUT,
+                    state.config.request_timeout,
+                )),
         )
         .with_state(state)
 }

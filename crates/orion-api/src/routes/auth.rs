@@ -4,7 +4,6 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use async_trait::async_trait;
 use axum::{
     extract::{FromRequestParts, Json, State},
     http::{header, request::Parts, HeaderMap, HeaderValue, StatusCode},
@@ -76,7 +75,6 @@ impl AuthenticatedUser {
     }
 }
 
-#[async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = ApiProblem;
 
@@ -90,7 +88,9 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         };
         let session = match state.sessions.load(session_id).await {
             Ok(Some(session)) => session,
-            Ok(None) | Err(SessionStoreError::Expired) => return Err(unauthenticated(request_id)),
+            Ok(None) | Err(SessionStoreError::Expired) => {
+                return Err(unauthenticated(request_id));
+            }
             Err(error) => return Err(ApiProblem::from(error).with_request_id(request_id)),
         };
         let user = UserRepository::new(state.db.clone())
