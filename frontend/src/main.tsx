@@ -2,12 +2,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./app/App";
-import { AuthProvider } from "./providers/AuthProvider";
+import { AppProviders } from "./providers/AppProviders";
+import "./shared/styles/global.css";
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Missing application root element");
+
+createRoot(rootElement).render(
   <StrictMode>
-    <AuthProvider>
+    <AppProviders>
       <App />
-    </AuthProvider>
+    </AppProviders>
   </StrictMode>,
 );
