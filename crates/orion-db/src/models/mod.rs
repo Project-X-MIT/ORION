@@ -1,17 +1,20 @@
 pub mod leaderboard;
 pub mod learning;
 pub mod news;
+pub mod notification;
 pub mod profile;
 pub mod quiz_attempt;
 pub mod quiz_question;
 pub mod rating;
 pub mod research;
+pub mod user;
 
 pub use leaderboard::{LeaderboardEntry, LeaderboardRankHistory};
 pub use learning::{
     CourseCompletion, CourseLesson, CourseModule, CourseProgress, ModuleCompletion,
 };
 pub use news::{NewsArticle, NewsIngestionRun, NewsSource};
+pub use notification::{NewNotification, Notification};
 pub use profile::{Profile, ProfileStatistics};
 pub use quiz_attempt::{
     AdvancedSettlementInput, BasicSettlementInput, NewQuizAttempt, QuizAnswer, QuizAttempt,
@@ -27,3 +30,4 @@ pub use research::{
     PaperStatus, ResearchPaper, ResearchPaperStatus, ResearchReview, ResearchStatus,
     ReviewRecommendation,
 };
+pub use user::{InvalidUserStatus, NewUser, User, UserStatus};

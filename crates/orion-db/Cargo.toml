@@ -1,13 +1,18 @@
 [package]
 name = "orion-db"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [dependencies]
-chrono = { version = "0.4", features = ["clock", "serde"] }
-sqlx = { version = "0.8.6", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio-rustls", "uuid"] }
-uuid = { version = "1", features = ["serde", "v4"] }
+chrono.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio.workspace = true
+
+[lints]
+workspace = true

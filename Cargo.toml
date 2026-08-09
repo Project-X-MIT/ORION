@@ -1,21 +1,99 @@
 [package]
 name = "orion-integration"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [workspace]
-members = ["crates/orion-db"]
+members = [
+    ".",
+    "crates/orion-api",
+    "crates/orion-common",
+    "crates/orion-db",
+    "crates/orion-domain",
+    "crates/orion-redis",
+    "crates/orion-worker",
+]
+default-members = ["."]
 resolver = "2"
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+argon2 = { version = "0.5", features = ["std"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+email_address = "0.2"
+fred = "10"
+http = "1"
+orion-api = { path = "crates/orion-api" }
+orion-common = { path = "crates/orion-common" }
 orion-db = { path = "crates/orion-db" }
+orion-domain = { path = "crates/orion-domain" }
+orion-redis = { path = "crates/orion-redis" }
+orion-worker = { path = "crates/orion-worker" }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+    "postgres",
+    "runtime-tokio-rustls",
+    "rust_decimal",
+    "uuid",
+] }
+thiserror = "2"
+time = "0.3"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = [
+    "catch-panic",
+    "compression-gzip",
+    "cors",
+    "limit",
+    "request-id",
+    "sensitive-headers",
+    "set-header",
+    "timeout",
+    "trace",
+] }
+tower-sessions = "0.14"
+tower-sessions-redis-store = "0.16"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["serde", "v4", "v7"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[dependencies]
+orion-api.workspace = true
+orion-common.workspace = true
+orion-db.workspace = true
+orion-domain.workspace = true
+orion-redis.workspace = true
+orion-worker.workspace = true
 
 [dev-dependencies]
-serde_json = "1"
-sqlx = { version = "0.8.6", default-features = false, features = ["chrono", "json", "macros", "migrate", "postgres", "runtime-tokio-rustls", "uuid"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-uuid = { version = "1", features = ["v4"] }
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
 
 [[test]]
 name = "research"

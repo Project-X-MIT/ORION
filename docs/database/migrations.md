@@ -1,0 +1,20 @@
+# Database migrations
+
+ORION migrations are append-only after they reach `main`. In particular,
+`202608070001`, `202608070002`, and `202608070009` are immutable empty legacy
+versions that may already be recorded in deployed databases.
+
+Application startup must call `orion_db::pool::connect_migrate_and_validate` (or
+call `migrate` on an existing pool). The migrator runs the idempotent
+`202608090010_users_foundation.sql` compatibility preflight under a PostgreSQL
+advisory lock before SQLx processes the recorded chain. This supplies the
+`users` prerequisite needed by already-merged DB-02 through DB-05 migrations,
+then SQLx records version `202608090010` normally after the legacy versions.
+Running the raw migration directory on a completely empty database without this
+preflight is unsupported because the historical DB-01 slot cannot be edited.
+
+Database tests use a dedicated `ORION_TEST_DATABASE_URL`, create a unique schema
+per test, and drop only that schema. The acceptance suite covers a fresh chain,
+an upgrade with the empty legacy versions already recorded, uniqueness error
+mapping, idempotent notification reads, repeat-safe seeds, and feature migration
+regressions.
