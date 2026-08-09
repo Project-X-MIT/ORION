@@ -18,26 +18,7 @@ function usePathname() {
 
 export function App() {
   const path = usePathname();
-  const { status, user, error, logout, refresh } = useAuth();
-
-  if (status === "loading") {
-    return (
-      <main aria-busy="true" aria-live="polite">
-        <p>Loading ORION…</p>
-      </main>
-    );
-  }
-
-  if (error) {
-    return (
-      <main role="alert">
-        <h1>We could not load ORION</h1>
-        <p>{error}</p>
-        <button type="button" onClick={() => void refresh()}>Try again</button>
-      </main>
-    );
-  }
-
+  const { user, logout } = useAuth();
   if (path === "/login") return <PublicRoute><LoginPage /></PublicRoute>;
   if (path === "/register") return <PublicRoute><RegisterPage /></PublicRoute>;
   return <ProtectedRoute>

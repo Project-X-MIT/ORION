@@ -1,9 +1,44 @@
-import { apiClient } from "../../shared/api/client";
-export { ApiClientError as AuthApiError } from "../../shared/api/errors";
-import type { AuthUser } from "./types";
+import type { ApiSuccess, AuthResponse, AuthUser } from "./types";
+
+export class AuthApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AuthApiError";
+    this.status = status;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = (await response.json().catch(() => null)) as
+    | ApiSuccess<T>
+    | { error?: { message?: string } }
+    | null;
+  if (!response.ok) {
+    throw new AuthApiError(
+      body && "error" in body && body.error?.message
+        ? body.error.message
+        : "Authentication request failed",
+      response.status,
+    );
+  }
+  if (!body || !("data" in body)) {
+    throw new AuthApiError("Authentication response was invalid", response.status);
+  }
+  return body.data;
+}
 
 export function getCurrentUser(): Promise<AuthUser> {
-  return apiClient.get<{ user: AuthUser }>("/auth/me").then((data) => data.user);
+  return request<{ user: AuthUser }>("/api/v1/auth/me").then((data) => data.user);
 }
 
 export function register(input: {
@@ -12,13 +47,19 @@ export function register(input: {
   password: string;
   display_name?: string;
 }): Promise<AuthUser> {
-  return apiClient.post<{ user: AuthUser }>("/auth/register", input).then((data) => data.user);
+  return request<{ user: AuthUser }>("/api/v1/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((data) => data.user);
 }
 
 export function login(input: { email: string; password: string }): Promise<AuthUser> {
-  return apiClient.post<{ user: AuthUser }>("/auth/login", input).then((data) => data.user);
+  return request<{ user: AuthUser }>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((data) => data.user);
 }
 
 export async function logout(): Promise<void> {
-  await apiClient.post<{ logged_out: boolean }>("/auth/logout");
+  await request("/api/v1/auth/logout", { method: "POST" });
 }

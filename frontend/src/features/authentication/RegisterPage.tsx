@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { FormEvent, useState } from "react";
 
 import { useAuth } from "../../providers/AuthProvider";
 

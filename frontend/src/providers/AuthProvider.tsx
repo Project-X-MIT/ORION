@@ -9,7 +9,6 @@ import {
 } from "react";
 
 import * as authApi from "../features/authentication/api";
-import { AuthApiError } from "../features/authentication/api";
 import type { AuthStatus, AuthUser } from "../features/authentication/types";
 
 type AuthContextValue = {
@@ -41,16 +40,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setStatus("authenticated");
       setError(null);
       return current;
-    } catch (requestError) {
+    } catch {
       setUser(null);
       setStatus("signed_out");
-      if (requestError instanceof AuthApiError && requestError.status === 401) {
-        setError(null);
-      } else {
-        setError(
-          requestError instanceof Error ? requestError.message : "Could not load your session",
-        );
-      }
       return null;
     }
   }, []);
@@ -58,16 +50,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  useEffect(() => {
-    const handleUnauthenticated = () => {
-      setUser(null);
-      setStatus("signed_out");
-      setError(null);
-    };
-    window.addEventListener("orion:unauthenticated", handleUnauthenticated);
-    return () => window.removeEventListener("orion:unauthenticated", handleUnauthenticated);
-  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -101,16 +83,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
       },
       logout: async () => {
-        try {
-          await authApi.logout();
-          setUser(null);
-          setStatus("signed_out");
-          setError(null);
-        } catch (requestError) {
-          const message = requestError instanceof Error ? requestError.message : "Logout failed";
-          setError(message);
-          throw requestError;
-        }
+        await authApi.logout();
+        setUser(null);
+        setStatus("signed_out");
+        setError(null);
       },
       refresh,
     }),
