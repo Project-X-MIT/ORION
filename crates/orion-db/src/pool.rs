@@ -68,10 +68,31 @@ pub async fn migrate(pool: &PgPool) -> Result<(), DatabaseStartupError> {
         .execute(&mut *preflight)
         .await
         .map_err(DatabaseStartupError::CompatibilityPreflight)?;
-    sqlx::raw_sql(USERS_COMPATIBILITY_PREFLIGHT)
-        .execute(&mut *preflight)
+    let migration_table_exists: bool = sqlx::query_scalar(
+        "SELECT to_regclass(current_schema() || '._sqlx_migrations') IS NOT NULL",
+    )
+    .fetch_one(&mut *preflight)
+    .await
+    .map_err(DatabaseStartupError::CompatibilityPreflight)?;
+    let users_foundation_applied = if migration_table_exists {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (
+                SELECT 1 FROM _sqlx_migrations
+                WHERE version = 202608090010 AND success = TRUE
+            )",
+        )
+        .fetch_one(&mut *preflight)
         .await
-        .map_err(DatabaseStartupError::CompatibilityPreflight)?;
+        .map_err(DatabaseStartupError::CompatibilityPreflight)?
+    } else {
+        false
+    };
+    if !users_foundation_applied {
+        sqlx::raw_sql(USERS_COMPATIBILITY_PREFLIGHT)
+            .execute(&mut *preflight)
+            .await
+            .map_err(DatabaseStartupError::CompatibilityPreflight)?;
+    }
     preflight
         .commit()
         .await

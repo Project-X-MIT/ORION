@@ -5,6 +5,9 @@ use orion_db::{
     pool,
     queries::notifications,
     repositories::{UserRepository, UserRepositoryError},
+    transactions::{
+        create_notification, list_notifications, mark_notification_read, unread_notification_count,
+    },
 };
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -151,34 +154,41 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
         deduplication_key: "welcome:v1",
         expires_at: None,
     };
-    let notification = notifications::create(&database.pool, input)
+    let notification = create_notification(&database.pool, input)
         .await
-        .expect("create notification");
+        .expect("create notification transaction");
     let duplicate = notifications::create(&database.pool, input)
         .await
         .expect("deduplicate notification retry");
     assert_eq!(notification.id, duplicate.id);
     assert_eq!(
-        notifications::unread_count(&database.pool, user.id)
+        unread_notification_count(&database.pool, user.id)
             .await
             .expect("count unread"),
         1
     );
 
-    let first_read = notifications::mark_read(&database.pool, user.id, notification.id)
+    let first_read = mark_notification_read(&database.pool, user.id, notification.id)
         .await
         .expect("mark read")
         .expect("notification exists");
-    let repeated_read = notifications::mark_read(&database.pool, user.id, notification.id)
+    let repeated_read = mark_notification_read(&database.pool, user.id, notification.id)
         .await
         .expect("repeat mark read")
         .expect("notification still exists");
     assert_eq!(first_read.read_at, repeated_read.read_at);
     assert_eq!(
-        notifications::unread_count(&database.pool, user.id)
+        unread_notification_count(&database.pool, user.id)
             .await
             .expect("count read state"),
         0
+    );
+    assert_eq!(
+        list_notifications(&database.pool, user.id, 20, 0)
+            .await
+            .expect("list notifications")
+            .len(),
+        1
     );
 
     let seed = include_str!("../seeds/dev_users.sql");
@@ -209,6 +219,7 @@ async fn upgrade_accepts_recorded_empty_legacy_migrations() {
     sqlx::raw_sql(
         r#"
         CREATE TABLE users (id UUID PRIMARY KEY);
+        INSERT INTO users (id) VALUES ('00000000-0000-0000-0000-000000000099');
         CREATE TABLE _sqlx_migrations (
             version BIGINT PRIMARY KEY,
             description TEXT NOT NULL,
@@ -261,6 +272,14 @@ async fn upgrade_accepts_recorded_empty_legacy_migrations() {
     .await
     .expect("inspect upgraded users table");
     assert!(has_email);
+    let legacy_username: String = sqlx::query_scalar(
+        "SELECT username::text FROM users
+         WHERE id = '00000000-0000-0000-0000-000000000099'",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .expect("read upgraded legacy username");
+    assert!(legacy_username.len() <= 32);
 
     database.cleanup().await;
 }

@@ -40,7 +40,7 @@ ALTER TABLE users ALTER COLUMN email TYPE CITEXT USING email::citext;
 ALTER TABLE users ALTER COLUMN username TYPE CITEXT USING username::citext;
 
 UPDATE users
-SET username = 'legacy-' || id::text
+SET username = 'legacy_' || left(replace(id::text, '-', ''), 24)
 WHERE username IS NULL OR btrim(username::text) = '';
 
 UPDATE users
