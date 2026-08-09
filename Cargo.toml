@@ -25,6 +25,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 argon2 = { version = "0.5", features = ["std"] }
 axum = { version = "0.8", features = ["macros", "ws"] }
 base64 = "0.22"
