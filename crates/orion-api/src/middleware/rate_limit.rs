@@ -1,4 +1,7 @@
-use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
 use axum::http::HeaderMap;
 use orion_redis::{RedisClient, RedisClientError};
@@ -17,7 +20,11 @@ impl LoginRateLimiter {
         Self { redis }
     }
 
-    pub async fn allow(&self, headers: &HeaderMap, normalized_email: &str) -> Result<bool, RedisClientError> {
+    pub async fn allow(
+        &self,
+        headers: &HeaderMap,
+        normalized_email: &str,
+    ) -> Result<bool, RedisClientError> {
         let address = headers
             .get("x-forwarded-for")
             .or_else(|| headers.get("x-real-ip"))

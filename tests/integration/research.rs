@@ -357,6 +357,28 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .fetch_one(&pool)
         .await?;
     assert_eq!(rating, 1025);
+    let ledger_entry = sqlx::query_as::<_, (String, Uuid, String, i32, i32, i32)>(
+        "SELECT source_type, source_id, dedupe_key, rating_before, rating_after, rating_delta
+         FROM rating_ledger
+         WHERE user_id = $1",
+    )
+    .bind(author_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_entry.0, "research_review");
+    assert_eq!(ledger_entry.1, draft.id);
+    assert_eq!(ledger_entry.2, "user");
+    assert_eq!(ledger_entry.3, 1000);
+    assert_eq!(ledger_entry.4, 1025);
+    assert_eq!(ledger_entry.5, 25);
+    let ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM rating_ledger WHERE user_id = $1 AND source_id = $2",
+    )
+    .bind(author_id)
+    .bind(draft.id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
     let award_state = repository.elo_award_state(draft.id).await?.unwrap();
     assert_eq!(award_state.0, Some(25));
     assert!(award_state.1.is_some());

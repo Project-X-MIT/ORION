@@ -3,7 +3,7 @@
 //! Feature owners expose isolated routers; application assembly remains here.
 
 use axum::{
-    http::HeaderMap,
+    http::{HeaderMap, Request},
     response::{IntoResponse, Response},
     Router,
 };
@@ -14,6 +14,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 pub mod config;
+pub mod middleware;
 pub mod routes;
 pub mod state;
 
@@ -121,11 +122,11 @@ pub fn success<T: Serialize>(headers: &HeaderMap, data: T) -> axum::Json<ApiSucc
     axum::Json(ApiSuccess::new(request_id(headers), data))
 }
 
-#[must_use]
 pub fn app(state: state::AppState) -> Router {
+    use axum::http::StatusCode;
     use tower::ServiceBuilder;
     use tower_http::{
-        cors::{AllowOrigin, CorsLayer},
+        cors::{AllowOrigin, Any, CorsLayer},
         request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
         timeout::TimeoutLayer,
         trace::TraceLayer,
@@ -152,9 +153,25 @@ pub fn app(state: state::AppState) -> Router {
             ServiceBuilder::new()
                 .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
                 .layer(PropagateRequestIdLayer::x_request_id())
-                .layer(TraceLayer::new_for_http())
+                .layer(
+                    TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                        let request_id = request
+                            .headers()
+                            .get("x-request-id")
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| Uuid::parse_str(value).ok());
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            request_id = ?request_id,
+                        )
+                    }),
+                )
                 .layer(cors)
-                .layer(TimeoutLayer::new(state.config.request_timeout)),
+                .layer(TimeoutLayer::with_status_code(
+                    StatusCode::REQUEST_TIMEOUT,
+                    state.config.request_timeout,
+                )),
         )
         .with_state(state)
 }
