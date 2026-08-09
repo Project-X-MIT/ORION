@@ -72,7 +72,10 @@ fn event_registry_is_unique_owned_documented_and_versioned() {
         assert!(event.minimum_supported_version > 0);
         assert!(event.minimum_supported_version <= event.current_version);
         assert!(
-            docs.contains(&format!("`{}`", event.event_type)),
+            docs.contains(&format!(
+                "| `{}` | {} | {} |",
+                event.event_type, event.owner, event.current_version
+            )),
             "undocumented event: {}",
             event.event_type
         );
