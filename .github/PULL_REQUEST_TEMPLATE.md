@@ -39,6 +39,6 @@ List the exact commands and important results:
 
 ## Reviewer evidence
 
-- Required CODEOWNERS: `@divi912` (default integration reviewer and centralized contract-path owner).
-- Screenshots/reports/artifacts: Not applicable; this is a backend/contract change. Golden fixtures are in `docs/contracts/fixtures/`; validation commands and results are listed above.
-- Known follow-up issues: No blocking issues. Future event consumers must use `claim_versioned_event`; Div integration review/merge remains required.
+- Required CODEOWNERS:
+- Screenshots/reports/artifacts:
+- Known follow-up issues:
