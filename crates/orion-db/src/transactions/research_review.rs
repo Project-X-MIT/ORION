@@ -160,7 +160,8 @@ pub async fn publish_and_award_elo(
         // `user_ratings` is the authoritative current-Elo table used by the
         // leaderboard.  Use the shared rating transaction so all award paths
         // apply the same baseline and delta semantics.
-        rating_transaction::award_elo(&mut transaction, author_id, elo_award).await?;
+        rating_transaction::award_elo_for_source(&mut transaction, author_id, elo_award, paper_id)
+            .await?;
 
         sqlx::query(
             "UPDATE research_papers\n             SET elo_award = $2, elo_awarded = TRUE, elo_awarded_at = CURRENT_TIMESTAMP\n             WHERE id = $1 AND NOT elo_awarded",

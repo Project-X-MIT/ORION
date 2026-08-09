@@ -57,3 +57,17 @@ pub struct RatingEvent {
     pub rating_delta: i32,
     pub created_at: DateTime<Utc>,
 }
+
+/// Append-only audit data for every user Elo change, including non-quiz awards.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct RatingLedgerEntry {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub source_type: String,
+    pub source_id: Uuid,
+    pub dedupe_key: String,
+    pub rating_before: i32,
+    pub rating_after: i32,
+    pub rating_delta: i32,
+    pub created_at: DateTime<Utc>,
+}

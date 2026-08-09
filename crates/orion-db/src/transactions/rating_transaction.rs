@@ -75,6 +75,39 @@ async fn ensure_question_rating(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn append_rating_ledger(
+    transaction: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    source_type: &str,
+    source_id: Uuid,
+    dedupe_key: &str,
+    rating_before: i32,
+    rating_after: i32,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO rating_ledger (
+            user_id, source_type, source_id, dedupe_key,
+            rating_before, rating_after, rating_delta, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "#,
+    )
+    .bind(user_id)
+    .bind(source_type)
+    .bind(source_id)
+    .bind(dedupe_key)
+    .bind(rating_before)
+    .bind(rating_after)
+    .bind(rating_after - rating_before)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
 /// Applies one user/question Elo result and records the complete audit event.
 ///
 /// Both rating rows are inserted if necessary and locked before the values are
@@ -147,6 +180,18 @@ pub async fn apply_rating_change(
     .bind(i32::from(outcome_value))
     .bind(now)
     .execute(&mut **transaction)
+    .await?;
+
+    append_rating_ledger(
+        transaction,
+        user_id,
+        source_type,
+        source_id,
+        &question_id.to_string(),
+        user.rating,
+        user_after,
+        now,
+    )
     .await?;
 
     sqlx::query_as::<_, RatingEvent>(
@@ -278,12 +323,92 @@ pub async fn apply_elo_delta(
     user_id: Uuid,
     delta: i32,
 ) -> Result<i32> {
-    sqlx::query_scalar::<_, i32>(
-        "INSERT INTO user_ratings (user_id, rating)\n         VALUES ($1, 1000 + $2)\n         ON CONFLICT (user_id) DO UPDATE\n         SET rating = user_ratings.rating + EXCLUDED.rating - 1000\n         RETURNING rating",
+    apply_elo_delta_for_source(
+        transaction,
+        user_id,
+        delta,
+        "manual",
+        Uuid::new_v4(),
+        "user",
+    )
+    .await
+}
+
+async fn apply_elo_delta_for_source(
+    transaction: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    delta: i32,
+    source_type: &str,
+    source_id: Uuid,
+    dedupe_key: &str,
+) -> Result<i32> {
+    // Preserve the legacy award baseline for users that have never played a
+    // quiz: their first non-quiz award starts from 1000.  The insert is
+    // conflict-safe, so concurrent awards still serialize on the user row.
+    let initial = (1000 + delta).clamp(1, 4000);
+    let inserted = sqlx::query(
+        "INSERT INTO user_ratings (user_id, rating) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
     )
     .bind(user_id)
-    .bind(delta)
-    .fetch_one(&mut **transaction)
+    .bind(initial)
+    .execute(&mut **transaction)
+    .await?
+    .rows_affected()
+        == 1;
+
+    if inserted {
+        append_rating_ledger(
+            transaction,
+            user_id,
+            source_type,
+            source_id,
+            dedupe_key,
+            1000,
+            initial,
+            Utc::now(),
+        )
+        .await?;
+        return Ok(initial);
+    }
+
+    let current = ensure_user_rating(transaction, user_id).await?;
+    let next = (current.rating + delta).clamp(1, 4000);
+    sqlx::query(
+        "UPDATE user_ratings SET rating = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .bind(next)
+    .execute(&mut **transaction)
+    .await?;
+    append_rating_ledger(
+        transaction,
+        user_id,
+        source_type,
+        source_id,
+        dedupe_key,
+        current.rating,
+        next,
+        Utc::now(),
+    )
+    .await?;
+    Ok(next)
+}
+
+/// Applies a research award and records it under the paper idempotency key.
+pub async fn award_elo_for_source(
+    transaction: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    award: i32,
+    source_id: Uuid,
+) -> Result<i32> {
+    apply_elo_delta_for_source(
+        transaction,
+        user_id,
+        award,
+        "research_review",
+        source_id,
+        "user",
+    )
     .await
 }
 

@@ -84,6 +84,7 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
     for table in [
         "users",
         "user_ratings",
+        "rating_ledger",
         "quiz_attempts",
         "leaderboard_rank_history",
         "research_papers",
@@ -118,6 +119,31 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
             .id,
         user.id
     );
+
+    let ledger_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO rating_ledger
+         (id, user_id, source_type, source_id, dedupe_key, rating_before, rating_after, rating_delta)
+         VALUES ($1, $2, 'test', $3, 'user', 1200, 1216, 16)",
+    )
+    .bind(ledger_id)
+    .bind(user.id)
+    .bind(Uuid::new_v4())
+    .execute(&database.pool)
+    .await
+    .expect("insert append-only rating ledger entry");
+    assert!(
+        sqlx::query("UPDATE rating_ledger SET rating_after = 1217 WHERE id = $1")
+            .bind(ledger_id)
+            .execute(&database.pool)
+            .await
+            .is_err()
+    );
+    assert!(sqlx::query("DELETE FROM rating_ledger WHERE id = $1")
+        .bind(ledger_id)
+        .execute(&database.pool)
+        .await
+        .is_err());
 
     let duplicate_email = users
         .create(NewUser {

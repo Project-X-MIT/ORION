@@ -24,7 +24,7 @@ pub use quiz_question::{
     NewQuizOption, NewQuizQuestion, PublicQuizOption, QuizOption, QuizQuestion,
     QuizQuestionWithOptions, QuizType,
 };
-pub use rating::{QuestionRating, RatingEvent, UserRating, DEFAULT_RATING};
+pub use rating::{QuestionRating, RatingEvent, RatingLedgerEntry, UserRating, DEFAULT_RATING};
 pub use research::{
     InvalidResearchPaperStatus, InvalidReviewRecommendation, NewResearchPaper, NewResearchReview,
     PaperStatus, ResearchPaper, ResearchPaperStatus, ResearchReview, ResearchStatus,
