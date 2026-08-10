@@ -305,6 +305,14 @@ impl ResearchRepository {
         .await
     }
 
+    pub async fn publish_and_award_elo(
+        &self,
+        paper_id: Uuid,
+        elo_award: i32,
+    ) -> Result<Option<ResearchPaper>> {
+        research_review::publish_and_award_elo(&self.pool, paper_id, elo_award).await
+    }
+
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }

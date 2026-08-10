@@ -88,9 +88,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         };
         let session = match state.sessions.load(session_id).await {
             Ok(Some(session)) => session,
-            Ok(None) | Err(SessionStoreError::Expired) => {
-                return Err(unauthenticated(request_id));
-            }
+            Ok(None) | Err(SessionStoreError::Expired) => return Err(unauthenticated(request_id)),
             Err(error) => return Err(ApiProblem::from(error).with_request_id(request_id)),
         };
         let user = UserRepository::new(state.db.clone())

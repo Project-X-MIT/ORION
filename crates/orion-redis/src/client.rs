@@ -51,7 +51,7 @@ impl RedisClient {
 
     pub async fn get(
         &self,
-        key: impl Into<fred::types::Key> + Send,
+        key: impl Into<fred::types::Key>,
     ) -> Result<Option<String>, RedisClientError> {
         let key = key.into();
         self.inner.get(key).await.map_err(RedisClientError::Command)
@@ -82,10 +82,7 @@ impl RedisClient {
         Ok(())
     }
 
-    pub async fn delete(
-        &self,
-        key: impl Into<fred::types::Key> + Send,
-    ) -> Result<(), RedisClientError> {
+    pub async fn delete(&self, key: impl Into<fred::types::Key>) -> Result<(), RedisClientError> {
         let key = key.into();
         let _: i64 = self
             .inner
@@ -97,7 +94,7 @@ impl RedisClient {
 
     pub async fn increment(
         &self,
-        key: impl Into<fred::types::Key> + Send,
+        key: impl Into<fred::types::Key>,
     ) -> Result<i64, RedisClientError> {
         let key = key.into();
         self.inner
@@ -108,7 +105,7 @@ impl RedisClient {
 
     pub async fn expire(
         &self,
-        key: impl Into<fred::types::Key> + Send,
+        key: impl Into<fred::types::Key>,
         seconds: i64,
     ) -> Result<(), RedisClientError> {
         let key = key.into();

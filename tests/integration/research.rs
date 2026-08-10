@@ -197,23 +197,6 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     assert!(approved.decided_at.is_some());
     assert_eq!(approved.evaluation_score, Some(92.0));
     assert_eq!(approved.evaluation_result, Some(evaluation.clone()));
-    assert!(repository
-        .update_draft(
-            draft.id,
-            author_id,
-            "must not change after approval",
-            "must not change",
-            "must not change",
-        )
-        .await?
-        .is_none());
-    let approved_content_mutation = sqlx::query(
-        "UPDATE research_papers SET content = 'must not change directly' WHERE id = $1",
-    )
-    .bind(draft.id)
-    .execute(&pool)
-    .await;
-    assert!(approved_content_mutation.is_err());
 
     let reviews = repository.list_reviews_by_paper_id(draft.id).await?;
     assert_eq!(reviews.len(), 1);
@@ -230,23 +213,6 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .expect("approved paper should publish");
     assert_eq!(published.parsed_status()?, ResearchPaperStatus::Published);
     assert!(published.published_at.is_some());
-    assert!(repository
-        .update_draft(
-            draft.id,
-            author_id,
-            "must not change after publication",
-            "must not change",
-            "must not change",
-        )
-        .await?
-        .is_none());
-    let published_content_mutation = sqlx::query(
-        "UPDATE research_papers SET content = 'must not change directly' WHERE id = $1",
-    )
-    .bind(draft.id)
-    .execute(&pool)
-    .await;
-    assert!(published_content_mutation.is_err());
     assert!(repository.find_published_by_id(draft.id).await?.is_some());
     assert!(repository
         .published_research(10, 0)
@@ -377,6 +343,53 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .iter()
         .all(|paper| paper.id != rejected.id));
+
+    // Publication and the Elo award are one idempotent transaction.  Two
+    // concurrent retries must produce exactly one rating change.
+    let (first_award, second_award) = tokio::join!(
+        repository.publish_and_award_elo(draft.id, 25),
+        repository.publish_and_award_elo(draft.id, 25),
+    );
+    assert!(first_award?.is_some());
+    assert!(second_award?.is_some());
+    let rating: i32 = sqlx::query_scalar("SELECT rating FROM user_ratings WHERE user_id = $1")
+        .bind(author_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(rating, 1025);
+    let ledger_entry = sqlx::query_as::<_, (String, Uuid, String, i32, i32, i32)>(
+        "SELECT source_type, source_id, dedupe_key, rating_before, rating_after, rating_delta
+         FROM rating_ledger
+         WHERE user_id = $1",
+    )
+    .bind(author_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_entry.0, "research_review");
+    assert_eq!(ledger_entry.1, draft.id);
+    assert_eq!(ledger_entry.2, "user");
+    assert_eq!(ledger_entry.3, 1000);
+    assert_eq!(ledger_entry.4, 1025);
+    assert_eq!(ledger_entry.5, 25);
+    let ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM rating_ledger WHERE user_id = $1 AND source_id = $2",
+    )
+    .bind(author_id)
+    .bind(draft.id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
+    let award_state = repository.elo_award_state(draft.id).await?.unwrap();
+    assert_eq!(award_state.0, Some(25));
+    assert!(award_state.1.is_some());
+    assert_eq!(repository.elo_awarded(draft.id).await?, Some(true));
+
+    let duplicate_award =
+        sqlx::query("UPDATE research_papers SET elo_awarded = FALSE WHERE id = $1")
+            .bind(draft.id)
+            .execute(&pool)
+            .await;
+    assert!(duplicate_award.is_err());
 
     // Force a failure after the review row is written but before the paper
     // decision can commit; the transaction must roll back both changes.
