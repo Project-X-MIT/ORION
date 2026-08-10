@@ -7,10 +7,13 @@ use orion_common::{
 use serde_json::json;
 use uuid::Uuid;
 
-fn fixture(name: &str) -> &'static str {
+fn fixture(name: &str) -> String {
     match name {
-        "success" => include_str!("../../../docs/contracts/fixtures/api_success_v1.json"),
-        "failure" => include_str!("../../../docs/contracts/fixtures/api_error_v1.json"),
+        "success" => include_str!("../../../docs/contracts/fixtures/api_success_v1.json")
+            .replace("\r\n", "\n"),
+        "failure" => {
+            include_str!("../../../docs/contracts/fixtures/api_error_v1.json").replace("\r\n", "\n")
+        }
         _ => panic!("unknown fixture"),
     }
 }
