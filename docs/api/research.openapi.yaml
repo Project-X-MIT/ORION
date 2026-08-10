@@ -1,0 +1,393 @@
+openapi: 3.1.0
+info:
+  title: ORION Research API
+  version: 1.0.0
+  description: Research authoring and published-paper access.
+
+paths:
+  /api/v1/research:
+    get:
+      operationId: research.list_published
+      summary: List published research
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Published research page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPageSuccess'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: research.create
+      summary: Create a research draft
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchDraftRequest'
+      responses:
+        '200':
+          description: Created draft.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPaperSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/research/drafts:
+    get:
+      operationId: research.list_own_drafts
+      summary: List the authenticated author's drafts
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: The authenticated author's draft page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPageSuccess'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/research/{research_id}:
+    parameters:
+      - $ref: '#/components/parameters/ResearchId'
+    get:
+      operationId: research.get
+      summary: Read a published paper or the authenticated author's paper
+      description: Anonymous callers can read published papers only. An authenticated author can read their own paper in any lifecycle state.
+      security:
+        - {}
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Research paper visible to the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPaperSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: research.update
+      summary: Update the authenticated author's draft
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchDraftRequest'
+      responses:
+        '200':
+          description: Updated draft.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPaperSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/research/{research_id}/submission:
+    parameters:
+      - $ref: '#/components/parameters/ResearchId'
+    post:
+      operationId: research.submit
+      summary: Submit the authenticated author's draft
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Submitted research paper.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchPaperSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: orion_session
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+    ResearchId:
+      name: research_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    ResearchDraftRequest:
+      type: object
+      required: [title, content]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        abstract:
+          type: string
+          maxLength: 5000
+        content:
+          type: string
+          minLength: 1
+          maxLength: 500000
+
+    ResearchPaper:
+      type: object
+      required: [id, author_id, title, abstract, content, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        author_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        abstract:
+          type: string
+        content:
+          type: string
+        status:
+          type: string
+          enum: [draft, submitted, under_review, approved, rejected, published]
+        submitted_at:
+          type: [string, 'null']
+          format: date-time
+        under_review_at:
+          type: [string, 'null']
+          format: date-time
+        decided_at:
+          type: [string, 'null']
+          format: date-time
+        published_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ResearchPaperSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ResearchPaper'
+
+    ResearchPage:
+      type: object
+      required: [items, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResearchPaper'
+        limit:
+          type: integer
+          format: int32
+        offset:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+
+    ResearchPageSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ResearchPage'
+
+    ApiSuccess:
+      type: object
+      required: [api_version, request_id, data]
+      properties:
+        api_version:
+          type: integer
+          enum: [1]
+        request_id:
+          type: string
+          format: uuid
+        data: {}
+
+    ApiFailure:
+      type: object
+      required: [api_version, request_id, error]
+      properties:
+        api_version:
+          type: integer
+          enum: [1]
+        request_id:
+          type: string
+          format: uuid
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_REQUEST, VALIDATION_FAILED, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, RATE_LIMITED, SERVICE_UNAVAILABLE, INTERNAL]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties:
+            type: string
+
+  responses:
+    InvalidRequest:
+      description: Invalid request or malformed path identifier.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    ValidationFailed:
+      description: Request violates validation or content policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    Unauthenticated:
+      description: Authentication is required or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    NotFound:
+      description: The paper is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    Conflict:
+      description: The requested lifecycle operation is no longer valid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    PayloadTooLarge:
+      description: Request body exceeds the 1 MiB policy limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    UnsupportedMediaType:
+      description: Authoring requests must use application/json.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    Internal:
+      description: Unexpected server failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    ServiceUnavailable:
+      description: Database or session service is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'

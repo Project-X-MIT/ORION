@@ -88,6 +88,15 @@ impl ResearchRepository {
         research::research_by_author(&self.pool, author_id, limit, offset).await
     }
 
+    pub async fn list_drafts_by_author_id(
+        &self,
+        author_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ResearchPaper>> {
+        research::list_drafts_by_author_id(&self.pool, author_id, limit, offset).await
+    }
+
     pub async fn list_for_review(&self, limit: i64, offset: i64) -> Result<Vec<ResearchPaper>> {
         research::list_for_review(&self.pool, limit, offset).await
     }

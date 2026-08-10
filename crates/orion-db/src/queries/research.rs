@@ -161,6 +161,26 @@ pub async fn research_by_author(
     list_by_author_id(pool, author_id, limit, offset).await
 }
 
+/// Returns only editable drafts owned by an author, newest first.
+pub async fn list_drafts_by_author_id(
+    pool: &PgPool,
+    author_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ResearchPaper>> {
+    let query = format!(
+        "SELECT {} FROM research_papers\n         WHERE author_id = $1 AND status = 'draft'\n         ORDER BY created_at DESC, id DESC\n         LIMIT $2 OFFSET $3",
+        RESEARCH_PAPER_COLUMNS
+    );
+
+    sqlx::query_as::<_, ResearchPaper>(&query)
+        .bind(author_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+}
+
 /// Returns papers waiting for a reviewer.  `under_review` is included because
 /// workers may claim a submitted paper just before the next polling cycle.
 pub async fn list_for_review(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<ResearchPaper>> {

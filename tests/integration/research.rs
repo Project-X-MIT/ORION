@@ -102,10 +102,30 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .is_some());
     assert!(repository
+        .find_draft_by_id(draft.id, reviewer_id)
+        .await?
+        .is_none());
+    assert!(repository
         .research_by_author(author_id, 10, 0)
         .await?
         .iter()
         .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .list_drafts_by_author_id(author_id, 10, 0)
+        .await?
+        .iter()
+        .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .list_drafts_by_author_id(reviewer_id, 10, 0)
+        .await?
+        .is_empty());
+    // The public repository surface must not expose an unpublished paper.
+    assert!(repository.find_published_by_id(draft.id).await?.is_none());
+    assert!(repository
+        .list_published(10, 0)
+        .await?
+        .iter()
+        .all(|paper| paper.id != draft.id));
 
     let edited = repository
         .update_draft(
@@ -126,11 +146,33 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .expect("draft should submit");
     assert_eq!(submitted.parsed_status()?, ResearchPaperStatus::Submitted);
     assert!(submitted.submitted_at.is_some());
+    assert_eq!(
+        repository
+            .find_by_id(draft.id)
+            .await?
+            .unwrap()
+            .parsed_status()?,
+        ResearchPaperStatus::Submitted
+    );
+    assert!(repository.find_published_by_id(draft.id).await?.is_none());
+    assert!(repository
+        .list_drafts_by_author_id(author_id, 10, 0)
+        .await?
+        .iter()
+        .all(|paper| paper.id != draft.id));
     assert!(repository
         .submitted_papers(10, 0)
         .await?
         .iter()
         .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .submit_for_review(draft.id, reviewer_id)
+        .await?
+        .is_none());
+    assert!(repository
+        .submit_for_review(draft.id, author_id)
+        .await?
+        .is_none());
     assert!(repository
         .update_draft(
             draft.id,
@@ -143,6 +185,10 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .is_none());
     assert!(repository
         .update_draft(draft.id, reviewer_id, "wrong owner", "", "content")
+        .await?
+        .is_none());
+    assert!(repository
+        .find_draft_by_id(draft.id, reviewer_id)
         .await?
         .is_none());
 
