@@ -398,8 +398,8 @@ pub async fn reject(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPape
     reject_paper(pool, paper_id).await
 }
 
-/// Publishes an approved paper.  Elo awarding is deliberately handled by the
-/// review transaction, where publication and the one-time award share a lock.
+/// Publishes an approved paper. Elo calculation and application are owned by
+/// the Elo consumer after it receives Phantom's versioned evaluation request.
 pub async fn publish_paper(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
     let query = format!(
         "UPDATE research_papers\n         SET status = 'published', published_at = COALESCE(published_at, CURRENT_TIMESTAMP)\n         WHERE id = $1 AND status = 'approved'\n         RETURNING {}",
@@ -540,8 +540,7 @@ pub async fn insert_review(
     .await
 }
 
-/// Reads the current award marker.  This is useful to workers deciding
-/// whether an interrupted publication transaction needs to be retried.
+/// Reads the award result marker for the Elo consumer's idempotency checks.
 pub async fn elo_award_state(
     pool: &PgPool,
     paper_id: Uuid,

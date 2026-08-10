@@ -1,8 +1,7 @@
-use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
-use crate::{models::ResearchPaper, transactions::rating_transaction};
+use crate::models::ResearchPaper;
 
 /// Completes one review and moves the paper to `approved` or `rejected` in
 /// the same transaction.  The paper row is locked before the review is
@@ -115,82 +114,6 @@ pub async fn complete_review(
         None,
     )
     .await
-}
-
-/// Publishes an approved paper and awards its author Elo atomically.
-///
-/// The paper row is the idempotency key: it is locked for the duration of the
-/// transaction, and `elo_awarded_at` is set only after the rating upsert.  A
-/// retry therefore observes the marker and cannot increment the author's Elo
-/// a second time.
-pub async fn publish_and_award_elo(
-    pool: &PgPool,
-    paper_id: Uuid,
-    elo_award: i32,
-) -> Result<Option<ResearchPaper>> {
-    let mut transaction = pool.begin().await?;
-
-    let paper = sqlx::query_as::<_, (Uuid, Uuid, String, bool, Option<DateTime<Utc>>)>(
-        "SELECT id, author_id, status, elo_awarded, elo_awarded_at\n         FROM research_papers\n         WHERE id = $1\n         FOR UPDATE",
-    )
-    .bind(paper_id)
-    .fetch_optional(&mut *transaction)
-    .await?;
-
-    let Some((paper_id, author_id, status, elo_awarded, _elo_awarded_at)) = paper else {
-        transaction.commit().await?;
-        return Ok(None);
-    };
-
-    if status == "approved" {
-        sqlx::query(
-            "UPDATE research_papers\n             SET status = 'published', published_at = COALESCE(published_at, CURRENT_TIMESTAMP)\n             WHERE id = $1 AND status = 'approved'",
-        )
-        .bind(paper_id)
-        .execute(&mut *transaction)
-        .await?;
-    }
-
-    if !matches!(status.as_str(), "approved" | "published") {
-        transaction.commit().await?;
-        return Ok(None);
-    }
-
-    if !elo_awarded {
-        // `user_ratings` is the authoritative current-Elo table used by the
-        // leaderboard.  Use the shared rating transaction so all award paths
-        // apply the same baseline and delta semantics.
-        rating_transaction::award_elo_for_source(&mut transaction, author_id, elo_award, paper_id)
-            .await?;
-
-        sqlx::query(
-            "UPDATE research_papers\n             SET elo_award = $2, elo_awarded = TRUE, elo_awarded_at = CURRENT_TIMESTAMP\n             WHERE id = $1 AND NOT elo_awarded",
-        )
-        .bind(paper_id)
-        .bind(elo_award)
-        .execute(&mut *transaction)
-        .await?;
-    }
-
-    let query = format!(
-        "SELECT {} FROM research_papers WHERE id = $1",
-        paper_columns()
-    );
-    let updated = sqlx::query_as::<_, ResearchPaper>(&query)
-        .bind(paper_id)
-        .fetch_optional(&mut *transaction)
-        .await?;
-
-    transaction.commit().await?;
-    Ok(updated)
-}
-
-pub async fn publish_paper_and_award_elo(
-    pool: &PgPool,
-    paper_id: Uuid,
-    elo_award: i32,
-) -> Result<Option<ResearchPaper>> {
-    publish_and_award_elo(pool, paper_id, elo_award).await
 }
 
 // Kept local to avoid making the query module's projection a public SQL
