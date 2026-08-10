@@ -72,7 +72,10 @@ fn event_registry_is_unique_owned_documented_and_versioned() {
         assert!(event.minimum_supported_version > 0);
         assert!(event.minimum_supported_version <= event.current_version);
         assert!(
-            docs.contains(&format!("`{}`", event.event_type)),
+            docs.contains(&format!(
+                "| `{}` | {} | {} |",
+                event.event_type, event.owner, event.current_version
+            )),
             "undocumented event: {}",
             event.event_type
         );
@@ -85,4 +88,28 @@ fn compatibility_gate_rejects_unknown_or_unversioned_events() {
     assert!(ensure_event_compatible("orion.rating.updated", 0).is_err());
     assert!(ensure_event_compatible("orion.rating.updated", 2).is_err());
     assert!(ensure_event_compatible("orion.unknown", 1).is_err());
+}
+
+#[test]
+fn envelope_validation_rejects_tampered_contract_metadata() {
+    let mut envelope = EventEnvelope::new(
+        EventId::from_uuid(uuid("00000000-0000-0000-0000-000000000030")),
+        occurred_at(),
+        "orion-api",
+        NotificationRequestedV1 {
+            notification_id: NotificationId::from_uuid(uuid(
+                "00000000-0000-0000-0000-000000000031",
+            )),
+            recipient_id: UserId::from_uuid(uuid("00000000-0000-0000-0000-000000000032")),
+            kind: NotificationKind::System,
+            title: "System".to_owned(),
+            body: "System event".to_owned(),
+            action_url: None,
+            deduplication_key: "system:contract-test".to_owned(),
+        },
+    );
+    assert!(envelope.validate_contract().is_ok());
+
+    envelope.schema_version = 2;
+    assert!(envelope.validate_contract().is_err());
 }

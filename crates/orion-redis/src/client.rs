@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use fred::interfaces::KeysInterface;
-use fred::prelude::{Client, ClientLike, Config, Error as FredError, PerformanceConfig};
+use fred::{
+    interfaces::KeysInterface,
+    prelude::{Client, ClientLike, Config, Error as FredError, PerformanceConfig},
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -51,6 +53,7 @@ impl RedisClient {
         &self,
         key: impl Into<fred::types::Key> + Send,
     ) -> Result<Option<String>, RedisClientError> {
+        let key = key.into();
         self.inner.get(key).await.map_err(RedisClientError::Command)
     }
 
@@ -83,6 +86,7 @@ impl RedisClient {
         &self,
         key: impl Into<fred::types::Key> + Send,
     ) -> Result<(), RedisClientError> {
+        let key = key.into();
         let _: i64 = self
             .inner
             .del(key)
@@ -95,6 +99,7 @@ impl RedisClient {
         &self,
         key: impl Into<fred::types::Key> + Send,
     ) -> Result<i64, RedisClientError> {
+        let key = key.into();
         self.inner
             .incr(key)
             .await
@@ -106,6 +111,7 @@ impl RedisClient {
         key: impl Into<fred::types::Key> + Send,
         seconds: i64,
     ) -> Result<(), RedisClientError> {
+        let key = key.into();
         let _: i64 = self
             .inner
             .expire(key, seconds, None)

@@ -195,6 +195,20 @@ async fn create_schema_objects(admin: &PgPool, schema: &str) {
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\
                 UNIQUE (attempt_id, question_id))"
         ),
+        format!(
+            "CREATE TABLE {schema}.rating_ledger (\
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+                user_id UUID NOT NULL REFERENCES {schema}.users(id),\
+                source_type TEXT NOT NULL,\
+                source_id UUID NOT NULL,\
+                dedupe_key TEXT NOT NULL,\
+                rating_before INTEGER NOT NULL,\
+                rating_after INTEGER NOT NULL,\
+                rating_delta INTEGER NOT NULL,\
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\
+                UNIQUE (source_type, source_id, dedupe_key),\
+                CHECK (rating_delta = rating_after - rating_before))"
+        ),
     ];
 
     for statement in statements {
@@ -561,9 +575,14 @@ async fn distinct_concurrent_settlements_preserve_both_rating_updates() {
         .fetch_one(&database.pool)
         .await
         .expect("count events");
+    let ledger_entries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rating_ledger")
+        .fetch_one(&database.pool)
+        .await
+        .expect("count rating ledger entries");
     assert_eq!(games, 2);
     assert_eq!(attempts, 2);
     assert_eq!(events, 2);
+    assert_eq!(ledger_entries, 2);
 
     database.cleanup().await;
 }
