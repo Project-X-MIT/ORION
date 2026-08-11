@@ -47,8 +47,8 @@ VALUES
     ('00000000-0000-4000-8000-000000001032', '00000000-0000-4000-8000-000000000008', '2', 3, FALSE)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO question_ratings (question_id)
-SELECT id
+INSERT INTO question_ratings (question_id, rating)
+SELECT id, 500
 FROM quiz_questions
 WHERE id IN (
     '00000000-0000-4000-8000-000000000001',

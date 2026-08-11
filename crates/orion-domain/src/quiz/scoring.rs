@@ -2,6 +2,12 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 
+pub use super::elo::{
+    clamp_player_elo, clamp_question_elo, compute_elo, compute_elo_with_source, expected_score,
+    EloResult, EloSourceMetadata, EloSourceMetadataError, BASIC_ELO_K, ELO_POLICY_VERSION,
+    PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
+};
+
 use super::{
     advanced::{AdvancedActualValue, AdvancedPrediction},
     basic::{McqAnswer, McqQuestion, McqResult},
@@ -11,123 +17,58 @@ use super::{
 pub const INCORRECT_SCORE: i32 = 0;
 pub const CORRECT_SCORE: i32 = 1;
 
-/// Minimum player rating accepted by the shared Basic ELO calculation.
-pub const PLAYER_ELO_MIN: f64 = 100.0;
-/// Maximum player rating accepted by the shared Basic ELO calculation.
-pub const PLAYER_ELO_MAX: f64 = 3000.0;
-/// Minimum question rating accepted by the shared Basic ELO calculation.
-pub const QUESTION_ELO_MIN: f64 = 100.0;
-/// Maximum question rating accepted by the shared Basic ELO calculation.
-pub const QUESTION_ELO_MAX: f64 = 2400.0;
-/// Fixed K-factor approved for Basic Quiz MCQ rating updates.
-pub const BASIC_ELO_K: f64 = 32.0;
-
-fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    if value.is_nan() {
-        min
-    } else {
-        value.max(min).min(max)
-    }
-}
-
-fn normalize_k(k: f64) -> f64 {
-    if k.is_finite() && k > 0.0 {
-        k
-    } else {
-        0.0
-    }
-}
-
-fn normalize_actual_score(score: f64) -> f64 {
-    if score.is_finite() {
-        clamp(score, 0.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
-/// Clamps a player rating to the approved `[100, 3000]` range.
-#[must_use]
-pub fn clamp_player_elo(elo: f64) -> f64 {
-    clamp(elo, PLAYER_ELO_MIN, PLAYER_ELO_MAX)
-}
-
-/// Clamps a question rating to the approved `[100, 2400]` range.
-#[must_use]
-pub fn clamp_question_elo(elo: f64) -> f64 {
-    clamp(elo, QUESTION_ELO_MIN, QUESTION_ELO_MAX)
-}
-
-/// The result of one deterministic player/question ELO update.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct EloResult {
-    /// Raw formula delta: `K * (Sa - Ea)`.
-    pub point_delta: f64,
-    /// Expected score before applying the answer outcome.
-    pub expected_score: f64,
-    /// Player rating after applying and clamping the update.
-    pub player_new_elo: f64,
-    /// Question rating after applying the inverse update and clamping it.
-    pub question_new_elo: f64,
-}
-
-impl EloResult {
-    /// Returns the actually applied player change after input/output guardrails.
-    #[must_use]
-    pub fn applied_player_delta(&self, original_player_elo: f64) -> f64 {
-        self.player_new_elo - clamp_player_elo(original_player_elo)
-    }
-
-    /// Returns the actually applied question change after input/output guardrails.
-    #[must_use]
-    pub fn applied_question_delta(&self, original_question_elo: f64) -> f64 {
-        self.question_new_elo - clamp_question_elo(original_question_elo)
-    }
-}
-
-/// Computes the player's expected score against a question.
-///
-/// Both ratings are clamped before they participate in the formula:
-/// `Ea = 1 / (1 + 10^((Rb - Ra) / 400))`.
-#[must_use]
-pub fn expected_score(player_elo: f64, question_elo: f64) -> f64 {
-    let player_elo = clamp_player_elo(player_elo);
-    let question_elo = clamp_question_elo(question_elo);
-    1.0 / (1.0 + 10_f64.powf((question_elo - player_elo) / 400.0))
-}
-
-/// Applies the shared ELO update formula to a player/question pair.
-///
-/// `k` is normalized to zero for non-positive or non-finite input. `sa` is
-/// normalized to the inclusive `[0, 1]` range. Input ratings and final ratings
-/// are clamped with their respective player/question guardrails.
-#[must_use]
-pub fn compute_elo(player_elo: f64, question_elo: f64, k: f64, sa: f64) -> EloResult {
-    let player_elo = clamp_player_elo(player_elo);
-    let question_elo = clamp_question_elo(question_elo);
-    let k = normalize_k(k);
-    let sa = normalize_actual_score(sa);
-    let expected_score = expected_score(player_elo, question_elo);
-    let point_delta = k * (sa - expected_score);
-
-    EloResult {
-        point_delta,
-        expected_score,
-        player_new_elo: clamp_player_elo(player_elo + point_delta),
-        question_new_elo: clamp_question_elo(question_elo - point_delta),
-    }
-}
-
 /// Calculates the shared ELO update for a Basic MCQ answer.
 #[must_use]
 pub fn mcq_elo_update(player_elo: f64, question_elo: f64, k: f64, correct: bool) -> EloResult {
-    compute_elo(player_elo, question_elo, k, if correct { 1.0 } else { 0.0 })
+    mcq_elo_update_with_source(
+        player_elo,
+        question_elo,
+        k,
+        correct,
+        EloSourceMetadata::try_new("domain_calculation", "unattributed", "1")
+            .expect("static internal Elo source metadata is valid"),
+    )
 }
 
-/// Calculates a Basic Quiz MCQ update using the approved fixed `K = 32`.
+/// Calculates a Basic MCQ update with validated source provenance.
+#[must_use]
+pub fn mcq_elo_update_with_source(
+    player_elo: f64,
+    question_elo: f64,
+    k: f64,
+    correct: bool,
+    source_metadata: EloSourceMetadata,
+) -> EloResult {
+    compute_elo_with_source(
+        player_elo,
+        question_elo,
+        k,
+        if correct { 1.0 } else { 0.0 },
+        source_metadata,
+    )
+}
+
+/// Calculates a Basic Quiz MCQ update using the approved fixed `K = 20`.
 #[must_use]
 pub fn basic_mcq_elo_update(player_elo: f64, question_elo: f64, correct: bool) -> EloResult {
     mcq_elo_update(player_elo, question_elo, BASIC_ELO_K, correct)
+}
+
+/// Calculates a Basic Quiz MCQ update with validated source provenance.
+#[must_use]
+pub fn basic_mcq_elo_update_with_source(
+    player_elo: f64,
+    question_elo: f64,
+    correct: bool,
+    source_metadata: EloSourceMetadata,
+) -> EloResult {
+    mcq_elo_update_with_source(
+        player_elo,
+        question_elo,
+        BASIC_ELO_K,
+        correct,
+        source_metadata,
+    )
 }
 
 /// A Basic answer outcome. Rating movement is calculated separately by
@@ -211,16 +152,16 @@ impl std::fmt::Display for Zone {
 #[must_use]
 pub fn advanced_k_sa(error_pct: u32) -> (Zone, f64, f64) {
     match error_pct {
-        0 => (Zone::Win, 45.0, 1.0),
-        1 => (Zone::Win, 42.75, 1.0),
-        2..=3 => (Zone::Win, 40.50, 1.0),
-        4..=5 => (Zone::Win, 38.25, 1.0),
-        6..=8 => (Zone::Win, 36.0, 1.0),
+        0 => (Zone::Win, 30.0, 1.0),
+        1 => (Zone::Win, 27.5, 1.0),
+        2..=3 => (Zone::Win, 25.0, 1.0),
+        4..=5 => (Zone::Win, 18.28, 1.0),
+        6..=8 => (Zone::Win, 16.0, 1.0),
         9..=10 => (Zone::Neutral, 0.0, 0.0),
         11..=20 => (Zone::MildPenalty, 15.0, 0.0),
         21..=30 => (Zone::MildPenalty, 25.0, 0.0),
         31..=50 => (Zone::MildPenalty, 30.0, 0.0),
-        _ => (Zone::SeverePenalty, 45.0, 0.0),
+        _ => (Zone::SeverePenalty, 35.0, 0.0),
     }
 }
 
@@ -255,8 +196,12 @@ pub fn advanced_error_pct(predicted: Decimal, actual: Decimal) -> u32 {
 }
 
 /// The complete result of an Advanced ELO update.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdvancedEloResult {
+    /// Immutable policy version used to calculate this result.
+    pub policy_version: u16,
+    /// Validated provenance for the actual value used by this result.
+    pub source_metadata: EloSourceMetadata,
     /// Shared guarded ELO result.
     pub elo: EloResult,
     /// Exact relative error before zone rounding.
@@ -301,12 +246,33 @@ pub fn advanced_elo_update(
     predicted: Decimal,
     actual: Decimal,
 ) -> AdvancedEloResult {
+    advanced_elo_update_with_source(
+        player_elo,
+        question_elo,
+        predicted,
+        actual,
+        EloSourceMetadata::try_new("domain_calculation", "unattributed", "1")
+            .expect("static internal Elo source metadata is valid"),
+    )
+}
+
+/// Calculates an Advanced ELO update with validated source provenance.
+#[must_use]
+pub fn advanced_elo_update_with_source(
+    player_elo: f64,
+    question_elo: f64,
+    predicted: Decimal,
+    actual: Decimal,
+    source_metadata: EloSourceMetadata,
+) -> AdvancedEloResult {
     let relative_error_pct = advanced_relative_error_pct(predicted, actual);
     let error_pct = advanced_error_pct(predicted, actual);
     let (zone, k, sa) = advanced_k_sa(error_pct);
-    let elo = compute_elo(player_elo, question_elo, k, sa);
+    let elo = compute_elo_with_source(player_elo, question_elo, k, sa, source_metadata.clone());
 
     AdvancedEloResult {
+        policy_version: ELO_POLICY_VERSION,
+        source_metadata,
         elo,
         relative_error_pct,
         error_pct,
@@ -324,20 +290,45 @@ pub fn advanced_prediction_elo_update(
     prediction: &AdvancedPrediction,
     actual: &AdvancedActualValue,
 ) -> AdvancedEloResult {
-    advanced_elo_update(player_elo, question_elo, prediction.value, actual.value)
+    try_advanced_prediction_elo_update(player_elo, question_elo, prediction, actual)
+        .expect("validated Advanced actual values must contain valid Elo source metadata")
+}
+
+/// Calculates Advanced ELO from validated domain values and reports invalid
+/// source metadata instead of panicking.
+pub fn try_advanced_prediction_elo_update(
+    player_elo: f64,
+    question_elo: f64,
+    prediction: &AdvancedPrediction,
+    actual: &AdvancedActualValue,
+) -> Result<AdvancedEloResult, EloSourceMetadataError> {
+    let source_metadata = EloSourceMetadata::try_new(
+        "advanced_actual_value",
+        actual.source_id.clone(),
+        actual.source_version.clone(),
+    )?;
+    Ok(advanced_elo_update_with_source(
+        player_elo,
+        question_elo,
+        prediction.value,
+        actual.value,
+        source_metadata,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        advanced_elo_update, advanced_error_pct, advanced_k_sa, advanced_relative_error_pct,
-        basic_mcq_elo_update, clamp_player_elo, clamp_question_elo, compute_elo, evaluate_answer,
-        expected_score, mcq_elo_update, score, score_answer, Zone, BASIC_ELO_K, CORRECT_SCORE,
+        advanced_elo_update, advanced_error_pct, advanced_k_sa, advanced_prediction_elo_update,
+        advanced_relative_error_pct, basic_mcq_elo_update, clamp_player_elo, clamp_question_elo,
+        compute_elo, evaluate_answer, expected_score, mcq_elo_update, score, score_answer,
+        try_advanced_prediction_elo_update, Zone, BASIC_ELO_K, CORRECT_SCORE, ELO_POLICY_VERSION,
         INCORRECT_SCORE, PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
     };
     use crate::quiz::basic::{
         IntendedQuestionSeconds, McqAnswer, McqOption, McqQuestion, SpecificationTopic,
     };
+    use chrono::Utc;
     use rust_decimal::Decimal;
     use serde::Deserialize;
     use uuid::Uuid;
@@ -462,7 +453,7 @@ mod tests {
 
     #[test]
     fn basic_mcq_uses_the_approved_k_factor() {
-        assert_eq!(BASIC_ELO_K, 32.0);
+        assert_eq!(BASIC_ELO_K, 20.0);
         assert_eq!(
             basic_mcq_elo_update(1500.0, 1500.0, true),
             mcq_elo_update(1500.0, 1500.0, BASIC_ELO_K, true)
@@ -593,16 +584,16 @@ mod tests {
     #[test]
     fn advanced_zone_table_matches_all_boundary_buckets() {
         let cases = [
-            (0, Zone::Win, 45.0, 1.0),
-            (1, Zone::Win, 42.75, 1.0),
-            (2, Zone::Win, 40.50, 1.0),
-            (4, Zone::Win, 38.25, 1.0),
-            (6, Zone::Win, 36.0, 1.0),
+            (0, Zone::Win, 30.0, 1.0),
+            (1, Zone::Win, 27.5, 1.0),
+            (2, Zone::Win, 25.0, 1.0),
+            (4, Zone::Win, 18.28, 1.0),
+            (6, Zone::Win, 16.0, 1.0),
             (9, Zone::Neutral, 0.0, 0.0),
             (11, Zone::MildPenalty, 15.0, 0.0),
             (21, Zone::MildPenalty, 25.0, 0.0),
             (31, Zone::MildPenalty, 30.0, 0.0),
-            (51, Zone::SeverePenalty, 45.0, 0.0),
+            (51, Zone::SeverePenalty, 35.0, 0.0),
         ];
 
         for (error_pct, expected_zone, expected_k, expected_sa) in cases {
@@ -634,6 +625,8 @@ mod tests {
     #[test]
     fn advanced_elo_uses_zone_outcome_and_shared_guardrails() {
         let win = advanced_elo_update(1400.0, 1600.0, Decimal::from(5), Decimal::from(5));
+        assert_eq!(win.policy_version, ELO_POLICY_VERSION);
+        assert_eq!(win.elo.policy_version, ELO_POLICY_VERSION);
         assert_eq!(win.zone, Zone::Win);
         assert!(win.elo.point_delta > 0.0);
 
@@ -648,5 +641,48 @@ mod tests {
         let bounded = advanced_elo_update(3000.0, 2399.0, Decimal::from(8), Decimal::from(5));
         assert!(bounded.elo.player_new_elo < PLAYER_ELO_MAX);
         assert_eq!(bounded.elo.question_new_elo, QUESTION_ELO_MAX);
+    }
+
+    #[test]
+    fn source_backed_advanced_output_contains_validated_source_metadata() {
+        let prediction =
+            super::AdvancedPrediction::new(Uuid::from_u128(1), Decimal::from(5), Utc::now());
+        let actual = super::AdvancedActualValue::new(
+            Uuid::from_u128(1),
+            Decimal::from(5),
+            Utc::now(),
+            Utc::now(),
+            "market-feed".to_owned(),
+            "2026-08".to_owned(),
+            true,
+        );
+
+        let result = advanced_prediction_elo_update(1400.0, 1600.0, &prediction, &actual);
+
+        assert_eq!(result.policy_version, ELO_POLICY_VERSION);
+        assert_eq!(
+            result.source_metadata.source_type(),
+            "advanced_actual_value"
+        );
+        assert_eq!(result.source_metadata.source_id(), "market-feed");
+        assert_eq!(result.source_metadata.source_version(), "2026-08");
+        assert_eq!(result.source_metadata, result.elo.source_metadata);
+    }
+
+    #[test]
+    fn source_backed_advanced_output_rejects_invalid_source_metadata() {
+        let prediction =
+            super::AdvancedPrediction::new(Uuid::from_u128(1), Decimal::from(5), Utc::now());
+        let actual = super::AdvancedActualValue::new(
+            Uuid::from_u128(1),
+            Decimal::from(5),
+            Utc::now(),
+            Utc::now(),
+            " ".to_owned(),
+            "2026-08".to_owned(),
+            true,
+        );
+
+        assert!(try_advanced_prediction_elo_update(1400.0, 1600.0, &prediction, &actual).is_err());
     }
 }

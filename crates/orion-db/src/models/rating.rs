@@ -3,7 +3,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// The starting Elo assigned to users and questions that have no history.
-pub const DEFAULT_RATING: i32 = 1200;
+pub const DEFAULT_RATING: i32 = 500;
 
 /// The current rating and aggregate answer record for one user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]

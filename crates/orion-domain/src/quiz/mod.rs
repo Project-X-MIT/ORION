@@ -6,6 +6,11 @@
 
 pub mod advanced;
 pub mod basic;
+#[cfg(test)]
+#[path = "../elo.rs"]
+pub mod elo;
+#[cfg(not(test))]
+pub use crate::value_objects::elo;
 pub mod scoring;
 pub mod validation;
 
@@ -21,11 +26,14 @@ pub use basic::{
     McqResult, SpecificationTopic, MAX_INTENDED_SECONDS, MIN_INTENDED_SECONDS,
 };
 pub use scoring::{
-    advanced_elo_update, advanced_error_pct, advanced_k_sa, advanced_prediction_elo_update,
-    advanced_relative_error_pct, basic_mcq_elo_update, clamp_player_elo, clamp_question_elo,
-    compute_elo, evaluate_answer, expected_score, mcq_elo_update, score, score_answer,
-    AdvancedEloResult, BasicScore, EloResult, Zone, BASIC_ELO_K, CORRECT_SCORE, INCORRECT_SCORE,
-    PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
+    advanced_elo_update, advanced_elo_update_with_source, advanced_error_pct, advanced_k_sa,
+    advanced_prediction_elo_update, advanced_relative_error_pct, basic_mcq_elo_update,
+    basic_mcq_elo_update_with_source, clamp_player_elo, clamp_question_elo, compute_elo,
+    compute_elo_with_source, evaluate_answer, expected_score, mcq_elo_update,
+    mcq_elo_update_with_source, score, score_answer, try_advanced_prediction_elo_update,
+    AdvancedEloResult, BasicScore, EloResult, EloSourceMetadata, EloSourceMetadataError, Zone,
+    BASIC_ELO_K, CORRECT_SCORE, ELO_POLICY_VERSION, INCORRECT_SCORE, PLAYER_ELO_MAX,
+    PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
 };
 pub use validation::{
     advanced_lifecycle_state, eligible_option, submission_expires_at,

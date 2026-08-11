@@ -5,6 +5,12 @@ use uuid::Uuid;
 
 use crate::ContractError;
 
+// This re-export keeps the shared Elo policy available to persistence and
+// worker crates without placing any calculation in those crates. The formula
+// itself remains exclusively in `src/elo.rs`.
+#[path = "elo.rs"]
+pub mod elo;
+
 macro_rules! uuid_id {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

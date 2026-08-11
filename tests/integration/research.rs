@@ -573,33 +573,10 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .iter()
         .all(|paper| paper.id != rejected.id));
 
-    // Publication and the Elo award are one idempotent transaction.  Two
-    // concurrent retries must produce exactly one rating change.
-    let (first_award, second_award) = tokio::join!(
-        repository.publish_and_award_elo(draft.id, 25),
-        repository.publish_and_award_elo(draft.id, 25),
-    );
-    assert!(first_award?.is_some());
-    assert!(second_award?.is_some());
-    let rating: i32 = sqlx::query_scalar("SELECT rating FROM user_ratings WHERE user_id = $1")
-        .bind(author_id)
-        .fetch_one(&pool)
-        .await?;
-    assert_eq!(rating, 1025);
-    let ledger_entry = sqlx::query_as::<_, (String, Uuid, String, i32, i32, i32)>(
-        "SELECT source_type, source_id, dedupe_key, rating_before, rating_after, rating_delta
-         FROM rating_ledger
-         WHERE user_id = $1",
-    )
-    .bind(author_id)
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(ledger_entry.0, "research_review");
-    assert_eq!(ledger_entry.1, draft.id);
-    assert_eq!(ledger_entry.2, "user");
-    assert_eq!(ledger_entry.3, 1000);
-    assert_eq!(ledger_entry.4, 1025);
-    assert_eq!(ledger_entry.5, 25);
+    // Publication queues the authoritative Elo request; it does not accept
+    // or apply a caller-supplied award.
+    let award_state = repository.elo_award_state(draft.id).await?.unwrap();
+    assert_eq!(award_state, (None, None));
     let ledger_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM rating_ledger WHERE user_id = $1 AND source_id = $2",
     )
@@ -607,18 +584,8 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     .bind(draft.id)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(ledger_count, 1);
-    let award_state = repository.elo_award_state(draft.id).await?.unwrap();
-    assert_eq!(award_state.0, Some(25));
-    assert!(award_state.1.is_some());
-    assert_eq!(repository.elo_awarded(draft.id).await?, Some(true));
-
-    let duplicate_award =
-        sqlx::query("UPDATE research_papers SET elo_awarded = FALSE WHERE id = $1")
-            .bind(draft.id)
-            .execute(&pool)
-            .await;
-    assert!(duplicate_award.is_err());
+    assert_eq!(ledger_count, 0);
+    assert_eq!(repository.elo_awarded(draft.id).await?, Some(false));
 
     // Force a failure after the review row is written but before the paper
     // decision can commit; the transaction must roll back both changes.
@@ -851,7 +818,9 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
         "100 award attempts must produce one request"
     );
     assert_eq!(event.0, "orion.research.elo_award.requested");
+    assert_eq!(event.1["contract_version"], 1);
     assert_eq!(event.1["author_id"], json!(author_id));
+    assert_eq!(event.1["review_id"], json!(review_id));
     assert_eq!(event.1["paper_status"], "published");
     assert_eq!(event.1["recommendation"], "approve");
     assert_eq!(event.1["evaluation_score"], 90);
