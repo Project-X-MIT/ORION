@@ -1,10 +1,32 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Result};
+use serde::Serialize;
+use sqlx::{PgPool, Postgres, Result, Transaction};
 use uuid::Uuid;
 
 use crate::models::{
     NewResearchPaper, NewResearchReview, ResearchPaper, ResearchPaperStatus, ResearchReview,
 };
+use crate::transactions::{research_review, write_outbox_event};
+
+const RESEARCH_ELO_AWARD_EVENT_TYPE: &str = "orion.research.elo_award.requested";
+const RESEARCH_ELO_AWARD_SCHEMA_VERSION: i32 = 1;
+
+#[must_use]
+pub fn research_award_idempotency_key(paper_id: Uuid, review_id: Uuid) -> String {
+    format!("research-paper:{paper_id}:review:{review_id}:elo-award")
+}
+
+#[derive(Debug, Serialize)]
+struct ResearchEloAwardRequestPayload {
+    paper_id: Uuid,
+    author_id: Uuid,
+    paper_status: &'static str,
+    rubric_version: i32,
+    evaluated_content_version: i32,
+    evaluation_score: i32,
+    recommendation: &'static str,
+    idempotency_key: String,
+}
 
 const RESEARCH_PAPER_COLUMNS: &str = r#"
     id,
@@ -89,6 +111,85 @@ pub async fn create_paper_from_input(
         .await
 }
 
+/// Creates a new draft identity for a post-decision re-review. The source row
+/// is never reopened or mutated; callers must provide a stable new UUID so a
+/// retried request keeps the same version identity.
+pub async fn create_revision(
+    pool: &PgPool,
+    source_paper_id: Uuid,
+    requester_id: Uuid,
+    new_paper_id: Uuid,
+    title: &str,
+    abstract_text: &str,
+    content: &str,
+) -> Result<Option<ResearchPaper>> {
+    if new_paper_id.is_nil() || new_paper_id == source_paper_id {
+        return Ok(None);
+    }
+
+    let mut transaction = pool.begin().await?;
+    let source = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT author_id, status
+         FROM research_papers
+         WHERE id = $1
+         FOR UPDATE",
+    )
+    .bind(source_paper_id)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let Some((author_id, status)) = source else {
+        transaction.commit().await?;
+        return Ok(None);
+    };
+    if author_id != requester_id
+        || !matches!(status.as_str(), "approved" | "rejected" | "published")
+    {
+        transaction.commit().await?;
+        return Ok(None);
+    }
+
+    let query = format!(
+        "INSERT INTO research_papers
+             (id, author_id, title, abstract, content)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING {}",
+        RESEARCH_PAPER_COLUMNS
+    );
+    let mut revision = sqlx::query_as::<_, ResearchPaper>(&query)
+        .bind(new_paper_id)
+        .bind(author_id)
+        .bind(title)
+        .bind(abstract_text)
+        .bind(content)
+        .fetch_optional(&mut *transaction)
+        .await?;
+
+    if revision.is_none() {
+        let existing_query = format!(
+            "SELECT {} FROM research_papers
+             WHERE id = $1
+               AND author_id = $2
+               AND title = $3
+               AND abstract = $4
+               AND content = $5
+             FOR UPDATE",
+            RESEARCH_PAPER_COLUMNS
+        );
+        revision = sqlx::query_as::<_, ResearchPaper>(&existing_query)
+            .bind(new_paper_id)
+            .bind(author_id)
+            .bind(title)
+            .bind(abstract_text)
+            .bind(content)
+            .fetch_optional(&mut *transaction)
+            .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(revision)
+}
+
 /// Returns a paper by its immutable identifier.
 pub async fn find_by_id(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
     let query = format!(
@@ -159,6 +260,26 @@ pub async fn research_by_author(
     offset: i64,
 ) -> Result<Vec<ResearchPaper>> {
     list_by_author_id(pool, author_id, limit, offset).await
+}
+
+/// Returns only editable drafts owned by an author, newest first.
+pub async fn list_drafts_by_author_id(
+    pool: &PgPool,
+    author_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ResearchPaper>> {
+    let query = format!(
+        "SELECT {} FROM research_papers\n         WHERE author_id = $1 AND status = 'draft'\n         ORDER BY created_at DESC, id DESC\n         LIMIT $2 OFFSET $3",
+        RESEARCH_PAPER_COLUMNS
+    );
+
+    sqlx::query_as::<_, ResearchPaper>(&query)
+        .bind(author_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
 }
 
 /// Returns papers waiting for a reviewer.  `under_review` is included because
@@ -360,26 +481,7 @@ pub async fn decide_paper(
     paper_id: Uuid,
     approved: bool,
 ) -> Result<Option<ResearchPaper>> {
-    let next_status = if approved {
-        ResearchPaperStatus::Approved
-    } else {
-        ResearchPaperStatus::Rejected
-    };
-    let recommendation_values = if approved {
-        "'approve', 'approved'"
-    } else {
-        "'reject', 'rejected'"
-    };
-    let query = format!(
-        "UPDATE research_papers\n         SET status = $2,\n             decided_by = (\n                 SELECT reviewer_id\n                 FROM research_reviews\n                 WHERE paper_id = $1 AND recommendation IN ({recommendation_values})\n                 ORDER BY reviewed_at DESC, id DESC\n                 LIMIT 1\n             ),\n             decided_at = COALESCE(decided_at, CURRENT_TIMESTAMP)\n         WHERE id = $1\n           AND status = 'under_review'\n           AND EXISTS (\n               SELECT 1\n               FROM research_reviews\n               WHERE paper_id = $1 AND recommendation IN ({recommendation_values})\n           )\n         RETURNING {}",
-        RESEARCH_PAPER_COLUMNS
-    );
-
-    sqlx::query_as::<_, ResearchPaper>(&query)
-        .bind(paper_id)
-        .bind(next_status.as_str())
-        .fetch_optional(pool)
-        .await
+    research_review::decide_research_paper(pool, paper_id, approved).await
 }
 
 pub async fn approve_paper(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
@@ -398,18 +500,97 @@ pub async fn reject(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPape
     reject_paper(pool, paper_id).await
 }
 
-/// Publishes an approved paper.  Elo awarding is deliberately handled by the
-/// review transaction, where publication and the one-time award share a lock.
+/// Publishes an approved paper and queues Phantom's versioned Elo request in
+/// the same transaction. If the outbox write fails, publication rolls back;
+/// the downstream Elo contract remains owned by Yash.
 pub async fn publish_paper(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
+    let mut transaction = pool.begin().await?;
+    let published = publish_paper_in_transaction(&mut transaction, paper_id).await?;
+    transaction.commit().await?;
+    Ok(published)
+}
+
+async fn publish_paper_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    paper_id: Uuid,
+) -> Result<Option<ResearchPaper>> {
+    let eligible = sqlx::query_as::<_, (Uuid, Uuid, f64, i32, i32, i32)>(
+        "SELECT p.author_id,
+                r.id,
+                r.score::double precision,
+                (r.evaluation_result ->> 'rubric_version')::integer,
+                (r.evaluation_result ->> 'evaluated_content_version')::integer,
+                (r.evaluation_result ->> 'overall_score')::integer
+         FROM research_papers AS p
+         JOIN research_reviews AS r
+           ON r.paper_id = p.id AND r.reviewer_id = p.decided_by
+         WHERE p.id = $1
+           AND p.status = 'approved'
+           AND r.recommendation IN ('approve', 'approved')
+           AND r.score IS NOT NULL
+           AND r.evaluation_result IS NOT NULL
+           AND r.evaluation_result ->> 'recommendation' IN ('approve', 'approved')
+           AND (r.evaluation_result ->> 'rubric_version')::integer = $2
+           AND (r.evaluation_result ->> 'evaluated_content_version')::integer > 0
+           AND r.score = (r.evaluation_result ->> 'overall_score')::double precision
+         ORDER BY r.reviewed_at DESC, r.id DESC
+         LIMIT 1
+         FOR UPDATE OF p",
+    )
+    .bind(paper_id)
+    .bind(RESEARCH_ELO_AWARD_SCHEMA_VERSION)
+    .fetch_optional(&mut **transaction)
+    .await?;
+
+    let Some((author_id, review_id, _score, rubric_version, evaluated_content_version, score)) =
+        eligible
+    else {
+        return Ok(None);
+    };
+
+    let idempotency_key = research_award_idempotency_key(paper_id, review_id);
+    let already_queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM outbox_events
+             WHERE event_type = $1
+               AND payload ->> 'paper_id' = $2
+               AND payload ->> 'idempotency_key' = $3
+         )",
+    )
+    .bind(RESEARCH_ELO_AWARD_EVENT_TYPE)
+    .bind(paper_id.to_string())
+    .bind(&idempotency_key)
+    .fetch_one(&mut **transaction)
+    .await?;
+
     let query = format!(
         "UPDATE research_papers\n         SET status = 'published', published_at = COALESCE(published_at, CURRENT_TIMESTAMP)\n         WHERE id = $1 AND status = 'approved'\n         RETURNING {}",
         RESEARCH_PAPER_COLUMNS
     );
-
-    sqlx::query_as::<_, ResearchPaper>(&query)
+    let published = sqlx::query_as::<_, ResearchPaper>(&query)
         .bind(paper_id)
-        .fetch_optional(pool)
-        .await
+        .fetch_optional(&mut **transaction)
+        .await?;
+    let Some(published) = published else {
+        return Ok(None);
+    };
+
+    if !already_queued {
+        let request = ResearchEloAwardRequestPayload {
+            paper_id,
+            author_id,
+            paper_status: "published",
+            rubric_version,
+            evaluated_content_version,
+            evaluation_score: score,
+            recommendation: "approve",
+            idempotency_key,
+        };
+        write_outbox_event(transaction, RESEARCH_ELO_AWARD_EVENT_TYPE, request).await?;
+    }
+
+    Ok(Some(published))
 }
 
 pub async fn publish(pool: &PgPool, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
@@ -424,7 +605,7 @@ pub async fn record_evaluation_result(
     evaluation_result: Option<&sqlx::types::JsonValue>,
 ) -> Result<Option<ResearchPaper>> {
     let query = format!(
-        "UPDATE research_papers\n         SET evaluation_score = $2, evaluation_result = $3\n         WHERE id = $1 AND status IN ('under_review', 'approved')\n         RETURNING {}",
+        "UPDATE research_papers\n         SET evaluation_score = $2, evaluation_result = $3\n         WHERE id = $1 AND status = 'under_review'\n         RETURNING {}",
         RESEARCH_PAPER_COLUMNS
     );
 
@@ -474,18 +655,41 @@ pub async fn store_review_evaluation(
     score: Option<f64>,
     evaluation_result: Option<&sqlx::types::JsonValue>,
 ) -> Result<Option<ResearchReview>> {
+    let mut transaction = pool.begin().await?;
+    let review_context = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT r.paper_id, p.status
+         FROM research_reviews AS r
+         JOIN research_papers AS p ON p.id = r.paper_id
+         WHERE r.id = $1 AND r.reviewer_id = $2
+         FOR UPDATE OF r, p",
+    )
+    .bind(review_id)
+    .bind(reviewer_id)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    let Some((_paper_id, status)) = review_context else {
+        transaction.commit().await?;
+        return Ok(None);
+    };
+    if status != "under_review" {
+        transaction.commit().await?;
+        return Ok(None);
+    }
+
     let query = format!(
-        "UPDATE research_reviews\n         SET score = $3,\n             evaluation_result = $4,\n             reviewed_at = CURRENT_TIMESTAMP\n         WHERE id = $1 AND reviewer_id = $2\n         RETURNING {}",
+        "UPDATE research_reviews\n         SET score = $3,\n             evaluation_result = $4,\n             reviewed_at = CURRENT_TIMESTAMP\n         WHERE id = $1 AND reviewer_id = $2\n           AND EXISTS (\n               SELECT 1\n               FROM research_papers\n               WHERE research_papers.id = research_reviews.paper_id\n                 AND research_papers.status = 'under_review'\n           )\n         RETURNING {}",
         RESEARCH_REVIEW_COLUMNS
     );
 
-    sqlx::query_as::<_, ResearchReview>(&query)
+    let updated = sqlx::query_as::<_, ResearchReview>(&query)
         .bind(review_id)
         .bind(reviewer_id)
         .bind(score)
         .bind(evaluation_result)
-        .fetch_optional(pool)
-        .await
+        .fetch_optional(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(updated)
 }
 
 pub async fn update_review_evaluation(
@@ -501,20 +705,37 @@ pub async fn update_review_evaluation(
 /// Persists a review outside the decision transaction.  The unique
 /// `(paper_id, reviewer_id)` constraint makes worker retries safe.
 pub async fn create_review(pool: &PgPool, review: NewResearchReview<'_>) -> Result<ResearchReview> {
+    let mut transaction = pool.begin().await?;
+    let paper_status: Option<String> = sqlx::query_scalar(
+        "SELECT status
+         FROM research_papers
+         WHERE id = $1
+         FOR UPDATE",
+    )
+    .bind(review.paper_id)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    if paper_status.as_deref() != Some("under_review") {
+        transaction.rollback().await?;
+        return Err(sqlx::Error::RowNotFound);
+    }
+
     let query = format!(
         "INSERT INTO research_reviews\n             (paper_id, reviewer_id, score, recommendation, comments, evaluation_result)\n         SELECT $1, $2, $3, $4, $5, $6\n         WHERE EXISTS (\n             SELECT 1 FROM research_papers\n             WHERE id = $1 AND status = 'under_review'\n         )\n         ON CONFLICT (paper_id, reviewer_id) DO UPDATE\n         SET score = EXCLUDED.score,\n             recommendation = EXCLUDED.recommendation,\n             comments = EXCLUDED.comments,\n             evaluation_result = EXCLUDED.evaluation_result,\n             reviewed_at = CURRENT_TIMESTAMP,\n             updated_at = CURRENT_TIMESTAMP\n         RETURNING {}",
         RESEARCH_REVIEW_COLUMNS
     );
 
-    sqlx::query_as::<_, ResearchReview>(&query)
+    let persisted = sqlx::query_as::<_, ResearchReview>(&query)
         .bind(review.paper_id)
         .bind(review.reviewer_id)
         .bind(review.score)
         .bind(review.recommendation)
         .bind(review.comments)
         .bind(review.evaluation_result)
-        .fetch_one(pool)
-        .await
+        .fetch_one(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(persisted)
 }
 
 pub async fn insert_review(

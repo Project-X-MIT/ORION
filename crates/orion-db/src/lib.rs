@@ -6,3 +6,4 @@ pub mod repositories;
 pub mod transactions;
 
 pub use error::DatabaseError;
+pub use transactions::write_outbox_event;

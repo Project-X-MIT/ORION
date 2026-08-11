@@ -45,6 +45,27 @@ impl ResearchRepository {
         research::create_paper_from_input(&self.pool, paper).await
     }
 
+    pub async fn create_revision(
+        &self,
+        source_paper_id: Uuid,
+        requester_id: Uuid,
+        new_paper_id: Uuid,
+        title: &str,
+        abstract_text: &str,
+        content: &str,
+    ) -> Result<Option<ResearchPaper>> {
+        research::create_revision(
+            &self.pool,
+            source_paper_id,
+            requester_id,
+            new_paper_id,
+            title,
+            abstract_text,
+            content,
+        )
+        .await
+    }
+
     pub async fn find_by_id(&self, paper_id: Uuid) -> Result<Option<ResearchPaper>> {
         research::find_by_id(&self.pool, paper_id).await
     }
@@ -86,6 +107,15 @@ impl ResearchRepository {
         offset: i64,
     ) -> Result<Vec<ResearchPaper>> {
         research::research_by_author(&self.pool, author_id, limit, offset).await
+    }
+
+    pub async fn list_drafts_by_author_id(
+        &self,
+        author_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ResearchPaper>> {
+        research::list_drafts_by_author_id(&self.pool, author_id, limit, offset).await
     }
 
     pub async fn list_for_review(&self, limit: i64, offset: i64) -> Result<Vec<ResearchPaper>> {
