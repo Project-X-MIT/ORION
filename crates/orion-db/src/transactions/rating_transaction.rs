@@ -1,23 +1,20 @@
 use chrono::{DateTime, Utc};
+use orion_domain::value_objects::elo::{compute_elo_with_source, EloSourceMetadata, BASIC_ELO_K};
 use sqlx::{Postgres, Result, Transaction};
 use uuid::Uuid;
 
-use crate::models::{QuestionRating, RatingEvent, UserRating};
+use crate::models::{QuestionRating, RatingEvent, UserRating, DEFAULT_RATING};
 
 /// Default K factors used by the two quiz modes.
-pub const BASIC_K_FACTOR: i32 = 32;
+pub const BASIC_K_FACTOR: i32 = BASIC_ELO_K as i32;
+/// Legacy integer fallback used by the current DB-only Advanced settlement
+/// path. Zone-based Advanced calculation is owned by the domain scorer.
 pub const ADVANCED_K_FACTOR: i32 = 40;
 
-/// The probability that the user wins against the question.
-pub fn expected_score(user_rating: i32, question_rating: i32) -> f64 {
-    1.0 / (1.0 + 10_f64.powf((question_rating - user_rating) as f64 / 400.0))
-}
-
-/// Returns the rounded integer Elo change for one answer.
-pub fn rating_delta(user_rating: i32, question_rating: i32, outcome: bool, k_factor: i32) -> i32 {
-    let actual = if outcome { 1.0 } else { 0.0 };
-    (k_factor as f64 * (actual - expected_score(user_rating, question_rating))).round() as i32
-}
+pub const PLAYER_ELO_MIN: i32 = 100;
+pub const PLAYER_ELO_MAX: i32 = 3000;
+pub const QUESTION_ELO_MIN: i32 = 100;
+pub const QUESTION_ELO_MAX: i32 = 2400;
 
 async fn ensure_user_rating(
     transaction: &mut Transaction<'_, Postgres>,
@@ -25,12 +22,13 @@ async fn ensure_user_rating(
 ) -> Result<UserRating> {
     sqlx::query(
         r#"
-        INSERT INTO user_ratings (user_id)
-        VALUES ($1)
+        INSERT INTO user_ratings (user_id, rating)
+        VALUES ($1, $2)
         ON CONFLICT (user_id) DO NOTHING
         "#,
     )
     .bind(user_id)
+    .bind(DEFAULT_RATING)
     .execute(&mut **transaction)
     .await?;
 
@@ -53,12 +51,13 @@ async fn ensure_question_rating(
 ) -> Result<QuestionRating> {
     sqlx::query(
         r#"
-        INSERT INTO question_ratings (question_id)
-        VALUES ($1)
+        INSERT INTO question_ratings (question_id, rating)
+        VALUES ($1, $2)
         ON CONFLICT (question_id) DO NOTHING
         "#,
     )
     .bind(question_id)
+    .bind(DEFAULT_RATING)
     .execute(&mut **transaction)
     .await?;
 
@@ -126,13 +125,22 @@ pub async fn apply_rating_change(
 ) -> Result<RatingEvent> {
     let user = ensure_user_rating(transaction, user_id).await?;
     let question = ensure_question_rating(transaction, question_id).await?;
-    let delta = rating_delta(user.rating, question.rating, outcome, k_factor);
-
-    // Keep ratings in a useful bounded range. The bounds are intentionally
-    // enforced here as well as in SQL so a bad historical row cannot overflow
-    // a future update.
-    let user_after = (user.rating + delta).clamp(1, 4000);
-    let question_after = (question.rating - delta).clamp(1, 4000);
+    let source_type = "quiz_attempt";
+    let source_id = attempt_id.unwrap_or_else(Uuid::new_v4);
+    let source_metadata = EloSourceMetadata::try_new(source_type, source_id.to_string(), "1")
+        .expect("static quiz Elo source metadata is valid");
+    let elo_result = compute_elo_with_source(
+        f64::from(user.rating),
+        f64::from(question.rating),
+        f64::from(k_factor),
+        if outcome { 1.0 } else { 0.0 },
+        source_metadata,
+    );
+    // Persist the bounded outputs from the shared calculation. The database
+    // transaction owns locking, counters, ledger writes, and idempotency; it
+    // does not recompute the Elo result.
+    let user_after = elo_result.player_new_elo as i32;
+    let question_after = elo_result.question_new_elo as i32;
     let effective_user_delta = user_after - user.rating;
     let outcome_value = if outcome { 1_i16 } else { 0_i16 };
     let error_pct = if question.attempts == 0 {
@@ -140,8 +148,6 @@ pub async fn apply_rating_change(
     } else {
         ((question.attempts - question.correct_answers) as f64 / question.attempts as f64) * 100.0
     };
-    let source_type = "quiz_attempt";
-    let source_id = attempt_id.unwrap_or_else(Uuid::new_v4);
     let zone = quiz_type;
     let sa = if outcome { 1.0 } else { 0.0 };
 
@@ -315,138 +321,26 @@ pub(crate) async fn events_for_attempt(
     .await
 }
 
-/// Applies an Elo delta without recording a quiz event.
-///
-/// This is used by non-quiz workflows such as research review awards.
-pub async fn apply_elo_delta(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
-    delta: i32,
-) -> Result<i32> {
-    apply_elo_delta_for_source(
-        transaction,
-        user_id,
-        delta,
-        "manual",
-        Uuid::new_v4(),
-        "user",
-    )
-    .await
-}
-
-async fn apply_elo_delta_for_source(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
-    delta: i32,
-    source_type: &str,
-    source_id: Uuid,
-    dedupe_key: &str,
-) -> Result<i32> {
-    // Preserve the legacy award baseline for users that have never played a
-    // quiz: their first non-quiz award starts from 1000.  The insert is
-    // conflict-safe, so concurrent awards still serialize on the user row.
-    let initial = (1000 + delta).clamp(1, 4000);
-    let inserted = sqlx::query(
-        "INSERT INTO user_ratings (user_id, rating) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
-    )
-    .bind(user_id)
-    .bind(initial)
-    .execute(&mut **transaction)
-    .await?
-    .rows_affected()
-        == 1;
-
-    if inserted {
-        append_rating_ledger(
-            transaction,
-            user_id,
-            source_type,
-            source_id,
-            dedupe_key,
-            1000,
-            initial,
-            Utc::now(),
-        )
-        .await?;
-        return Ok(initial);
-    }
-
-    let current = ensure_user_rating(transaction, user_id).await?;
-    let next = (current.rating + delta).clamp(1, 4000);
-    sqlx::query(
-        "UPDATE user_ratings SET rating = $2, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .bind(next)
-    .execute(&mut **transaction)
-    .await?;
-    append_rating_ledger(
-        transaction,
-        user_id,
-        source_type,
-        source_id,
-        dedupe_key,
-        current.rating,
-        next,
-        Utc::now(),
-    )
-    .await?;
-    Ok(next)
-}
-
-/// Applies a research award and records it under the supplied idempotency
-/// key. The caller owns the source identity and must keep the key stable for
-/// retries of the same business event.
-pub async fn award_elo_for_source(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
-    award: i32,
-    source_id: Uuid,
-) -> Result<i32> {
-    let idempotency_key = format!("research-paper:{source_id}:elo-award");
-    award_elo_for_source_with_key(transaction, user_id, award, source_id, &idempotency_key).await
-}
-
-/// Applies a research award with an explicit per-source idempotency key.
-pub async fn award_elo_for_source_with_key(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
-    award: i32,
-    source_id: Uuid,
-    idempotency_key: &str,
-) -> Result<i32> {
-    apply_elo_delta_for_source(
-        transaction,
-        user_id,
-        award,
-        "research_review",
-        source_id,
-        idempotency_key,
-    )
-    .await
-}
-
-pub async fn award_elo(
-    transaction: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
-    award: i32,
-) -> Result<i32> {
-    apply_elo_delta(transaction, user_id, award).await
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{expected_score, rating_delta};
+    use orion_domain::value_objects::elo::{compute_elo, expected_score};
+
+    use super::BASIC_K_FACTOR;
+
+    #[test]
+    fn basic_k_factor_matches_the_approved_policy() {
+        assert_eq!(BASIC_K_FACTOR, 20);
+    }
 
     #[test]
     fn equal_ratings_have_equal_expected_score() {
-        assert!((expected_score(1200, 1200) - 0.5).abs() < f64::EPSILON);
+        assert!((expected_score(1200.0, 1200.0) - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn equal_ratings_move_by_half_the_k_factor() {
-        assert_eq!(rating_delta(1200, 1200, true, 32), 16);
-        assert_eq!(rating_delta(1200, 1200, false, 32), -16);
+        assert_eq!(compute_elo(1200.0, 1200.0, 32.0, 1.0).rounded_delta, 16);
+        assert_eq!(compute_elo(1200.0, 1200.0, 32.0, 0.0).rounded_delta, -16);
     }
 
     #[test]
@@ -458,7 +352,13 @@ mod tests {
         for correct in answers {
             let player_before = player_rating;
             let question_before = question_rating;
-            let delta = rating_delta(player_before, question_before, correct, 32);
+            let delta = compute_elo(
+                f64::from(player_before),
+                f64::from(question_before),
+                32.0,
+                if correct { 1.0 } else { 0.0 },
+            )
+            .rounded_delta;
 
             player_rating += delta;
             question_rating -= delta;

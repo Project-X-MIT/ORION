@@ -6,7 +6,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 const RESEARCH_ELO_AWARD_EVENT_TYPE: &str = "orion.research.elo_award.requested";
-const RESEARCH_ELO_AWARD_SCHEMA_VERSION: u16 = 1;
+const RESEARCH_ELO_AWARD_CONTRACT_VERSION: u16 = 1;
+const RESEARCH_RUBRIC_VERSION: u16 = 1;
 
 /// Phantom's persisted request body for the versioned Yash handoff.
 ///
@@ -14,7 +15,9 @@ const RESEARCH_ELO_AWARD_SCHEMA_VERSION: u16 = 1;
 /// no Elo delta; Yash owns the score-to-Elo policy and calculation.
 #[derive(Debug, Serialize)]
 struct ResearchEloAwardRequestPayload {
+    contract_version: u16,
     paper_id: Uuid,
+    review_id: Uuid,
     author_id: Uuid,
     paper_status: &'static str,
     rubric_version: u16,
@@ -54,7 +57,7 @@ struct PersistedEvidence {
 
 impl PersistedEvaluation {
     fn is_valid_for(&self, score: f64, recommendation: &str) -> bool {
-        if self.rubric_version != RESEARCH_ELO_AWARD_SCHEMA_VERSION
+        if self.rubric_version != RESEARCH_RUBRIC_VERSION
             || self.evaluated_content_version == 0
             || self.overall_score > 100
             || !score.is_finite()
@@ -190,7 +193,9 @@ pub async fn enqueue_research_award_in_transaction(
     }
 
     let request = ResearchEloAwardRequestPayload {
+        contract_version: RESEARCH_ELO_AWARD_CONTRACT_VERSION,
         paper_id,
+        review_id,
         author_id,
         paper_status: "published",
         rubric_version: evaluation.rubric_version,

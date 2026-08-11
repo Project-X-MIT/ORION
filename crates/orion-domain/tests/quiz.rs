@@ -3,3 +3,6 @@
 #[allow(dead_code, unused_imports)]
 #[path = "../src/quiz/mod.rs"]
 mod quiz;
+
+#[path = "../../../tests/benchmarks/elo.rs"]
+mod elo_benchmark;

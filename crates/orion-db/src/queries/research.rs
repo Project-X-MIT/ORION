@@ -9,7 +9,8 @@ use crate::models::{
 use crate::transactions::{research_review, write_outbox_event};
 
 const RESEARCH_ELO_AWARD_EVENT_TYPE: &str = "orion.research.elo_award.requested";
-const RESEARCH_ELO_AWARD_SCHEMA_VERSION: i32 = 1;
+const RESEARCH_ELO_AWARD_CONTRACT_VERSION: i32 = 1;
+const RESEARCH_RUBRIC_VERSION: i32 = 1;
 
 #[must_use]
 pub fn research_award_idempotency_key(paper_id: Uuid, review_id: Uuid) -> String {
@@ -18,7 +19,9 @@ pub fn research_award_idempotency_key(paper_id: Uuid, review_id: Uuid) -> String
 
 #[derive(Debug, Serialize)]
 struct ResearchEloAwardRequestPayload {
+    contract_version: i32,
     paper_id: Uuid,
+    review_id: Uuid,
     author_id: Uuid,
     paper_status: &'static str,
     rubric_version: i32,
@@ -538,7 +541,7 @@ async fn publish_paper_in_transaction(
          FOR UPDATE OF p",
     )
     .bind(paper_id)
-    .bind(RESEARCH_ELO_AWARD_SCHEMA_VERSION)
+    .bind(RESEARCH_RUBRIC_VERSION)
     .fetch_optional(&mut **transaction)
     .await?;
 
@@ -578,7 +581,9 @@ async fn publish_paper_in_transaction(
 
     if !already_queued {
         let request = ResearchEloAwardRequestPayload {
+            contract_version: RESEARCH_ELO_AWARD_CONTRACT_VERSION,
             paper_id,
+            review_id,
             author_id,
             paper_status: "published",
             rubric_version,
