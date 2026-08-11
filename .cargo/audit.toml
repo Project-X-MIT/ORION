@@ -1,0 +1,13 @@
+# The lockfile contains optional transitive dependencies declared by upstream
+# crates but not enabled by ORION's feature graph. Keep these exceptions
+# explicit so cargo-audit remains a required, reproducible check.
+[advisories]
+ignore = [
+    # rkyv 0.7 is an optional dependency of rust_decimal/chrono and is not
+    # enabled by this workspace; upgrading the optional declaration requires an
+    # upstream release.
+    "RUSTSEC-2026-0235",
+    # rsa is an optional sqlx-mysql dependency; RustSec currently has no fixed
+    # upstream release for this advisory and ORION enables only PostgreSQL.
+    "RUSTSEC-2023-0071",
+]

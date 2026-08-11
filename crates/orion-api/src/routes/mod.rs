@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod health;
+pub mod leaderboard;
 pub mod research;
 
 use axum::Router;

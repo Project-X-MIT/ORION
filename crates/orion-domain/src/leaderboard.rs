@@ -113,7 +113,7 @@ pub fn validate_database_rank(rank: i64) -> Result<u64, LeaderboardValidationErr
         .ok_or(LeaderboardValidationError::InvalidRank(rank))
 }
 
-pub const fn validate_database_rating(rating: i32) -> Result<Rating, LeaderboardValidationError> {
+pub fn validate_database_rating(rating: i32) -> Result<Rating, LeaderboardValidationError> {
     match Rating::new(rating) {
         Ok(rating) => Ok(rating),
         Err(_) => Err(LeaderboardValidationError::InvalidRating(rating)),

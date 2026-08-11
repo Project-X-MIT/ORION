@@ -6,6 +6,7 @@ pub mod entities;
 pub mod errors;
 pub mod events;
 pub mod identity;
+pub mod leaderboard;
 pub mod traits;
 pub mod value_objects;
 

@@ -5,7 +5,7 @@ use orion_db::{pool as db_pool, transactions::snapshot_leaderboard};
 use orion_redis::RedisClient;
 use sqlx::{
     postgres::PgPoolOptions,
-    types::chrono::{Duration, Utc},
+    types::chrono::{DateTime, Utc},
     PgPool,
 };
 use uuid::Uuid;
@@ -94,19 +94,27 @@ async fn seed_ranked_users(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+async fn snapshot_time(pool: &PgPool, minutes_ago: i32) -> Result<DateTime<Utc>, sqlx::Error> {
+    sqlx::query_scalar("SELECT CURRENT_TIMESTAMP - ($1 * INTERVAL '1 minute')")
+        .bind(minutes_ago)
+        .fetch_one(pool)
+        .await
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orders_by_elo_then_uuid_and_exposes_movement() -> Result<(), Box<dyn Error>> {
     let Some(database) = TestDatabase::create().await? else {
         return Ok(());
     };
     seed_ranked_users(&database.pool).await?;
-    let first_snapshot = Utc::now() - Duration::minutes(2);
+    let first_snapshot = snapshot_time(&database.pool, 2).await?;
     snapshot_leaderboard(&database.pool, first_snapshot).await?;
     sqlx::query("UPDATE user_ratings SET rating = 1700 WHERE user_id = $1")
         .bind(user_id(4))
         .execute(&database.pool)
         .await?;
-    snapshot_leaderboard(&database.pool, first_snapshot + Duration::minutes(1)).await?;
+    let second_snapshot = snapshot_time(&database.pool, 1).await?;
+    snapshot_leaderboard(&database.pool, second_snapshot).await?;
 
     let page = RankService::new(database.pool.clone())
         .global_page(10, None)
