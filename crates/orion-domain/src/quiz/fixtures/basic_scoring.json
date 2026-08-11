@@ -19,36 +19,16 @@
   },
   "cases": [
     {
-      "name": "correct_minimum_reward",
+      "name": "correct_answer",
       "selected_option_id": "00000000-0000-0000-0000-000000000002",
-      "reward": 5,
       "expected_correct": true,
-      "expected_score": 1,
-      "expected_reward": 5
+      "expected_score": 1
     },
     {
-      "name": "correct_maximum_reward",
-      "selected_option_id": "00000000-0000-0000-0000-000000000002",
-      "reward": 10,
-      "expected_correct": true,
-      "expected_score": 1,
-      "expected_reward": 10
-    },
-    {
-      "name": "incorrect_minimum_reward",
+      "name": "incorrect_answer",
       "selected_option_id": "00000000-0000-0000-0000-000000000003",
-      "reward": 5,
       "expected_correct": false,
-      "expected_score": 0,
-      "expected_reward": 0
-    },
-    {
-      "name": "incorrect_maximum_reward",
-      "selected_option_id": "00000000-0000-0000-0000-000000000003",
-      "reward": 10,
-      "expected_correct": false,
-      "expected_score": 0,
-      "expected_reward": 0
+      "expected_score": 0
     }
   ]
 }

@@ -1,12 +1,13 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::{Decimal, RoundingStrategy};
+use serde::{Deserialize, Serialize};
 
 use super::{
+    advanced::{AdvancedActualValue, AdvancedPrediction},
     basic::{McqAnswer, McqQuestion, McqResult},
     validation::{validate_answer, validate_question, McqValidationError},
 };
 
-pub const MIN_BASIC_REWARD: i32 = 5;
-pub const MAX_BASIC_REWARD: i32 = 10;
 pub const INCORRECT_SCORE: i32 = 0;
 pub const CORRECT_SCORE: i32 = 1;
 
@@ -129,73 +130,12 @@ pub fn basic_mcq_elo_update(player_elo: f64, question_elo: f64, correct: bool) -
     mcq_elo_update(player_elo, question_elo, BASIC_ELO_K, correct)
 }
 
-/// An approved positive reward for one correct Basic Quiz answer.
-///
-/// Basic rewards are deliberately bounded so callers cannot inject arbitrary
-/// point values into scoring or rating workflows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct BasicRewardInput(i32);
-
-impl BasicRewardInput {
-    /// Creates an approved Basic Quiz reward in the inclusive +5..=+10 range.
-    pub const fn new(reward: i32) -> Result<Self, InvalidBasicRewardInput> {
-        if reward < MIN_BASIC_REWARD || reward > MAX_BASIC_REWARD {
-            return Err(InvalidBasicRewardInput { reward });
-        }
-        Ok(Self(reward))
-    }
-
-    #[must_use]
-    pub const fn get(self) -> i32 {
-        self.0
-    }
-}
-
-impl TryFrom<i32> for BasicRewardInput {
-    type Error = InvalidBasicRewardInput;
-
-    fn try_from(reward: i32) -> Result<Self, Self::Error> {
-        Self::new(reward)
-    }
-}
-
-impl From<BasicRewardInput> for i32 {
-    fn from(reward: BasicRewardInput) -> Self {
-        reward.get()
-    }
-}
-
-impl<'de> Deserialize<'de> for BasicRewardInput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let reward = i32::deserialize(deserializer)?;
-        Self::new(reward).map_err(|error| {
-            serde::de::Error::custom(format!(
-                "Basic reward must be between +{MIN_BASIC_REWARD} and +{MAX_BASIC_REWARD}, got {value}",
-                value = error.reward
-            ))
-        })
-    }
-}
-
-/// Returned when a Basic Quiz reward is outside the approved range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidBasicRewardInput {
-    pub reward: i32,
-}
-
-/// Short alias for callers that do not need to emphasize the input boundary.
-pub type BasicReward = BasicRewardInput;
-
-/// A scored answer and the approved points awarded for it.
+/// A Basic answer outcome. Rating movement is calculated separately by
+/// [`basic_mcq_elo_update`] using the fixed Basic K-factor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BasicScore {
     pub result: McqResult,
     pub score: i32,
-    pub reward: i32,
 }
 
 /// Evaluates one answer against a question's unique eligible option.
@@ -215,25 +155,20 @@ pub fn evaluate_answer(
     })
 }
 
-/// Calculates the Basic Quiz points for one validated answer.
-pub fn score(
-    question: &McqQuestion,
-    answer: McqAnswer,
-    reward: BasicRewardInput,
-) -> Result<i32, McqValidationError> {
+/// Calculates the Basic Quiz outcome (`1` for correct, `0` for incorrect).
+pub fn score(question: &McqQuestion, answer: McqAnswer) -> Result<i32, McqValidationError> {
     let result = evaluate_answer(question, answer)?;
     Ok(if result.is_correct {
-        reward.get()
+        CORRECT_SCORE
     } else {
         INCORRECT_SCORE
     })
 }
 
-/// Evaluates an answer and returns both its result and awarded points.
+/// Evaluates an answer and returns its binary Basic outcome.
 pub fn score_answer(
     question: &McqQuestion,
     answer: McqAnswer,
-    reward: BasicRewardInput,
 ) -> Result<BasicScore, McqValidationError> {
     let result = evaluate_answer(question, answer)?;
     let score = if result.is_correct {
@@ -241,58 +176,171 @@ pub fn score_answer(
     } else {
         INCORRECT_SCORE
     };
-    let reward = if result.is_correct { reward.get() } else { 0 };
-    Ok(BasicScore {
-        result,
-        score,
-        reward,
-    })
+    Ok(BasicScore { result, score })
+}
+
+/// Zone classification for an Advanced prediction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Zone {
+    /// Error 0-8%: a correct prediction with a decreasing reward K.
+    Win,
+    /// Error 9-10%: no rating movement.
+    Neutral,
+    /// Error 11-50%: an increasing penalty K.
+    MildPenalty,
+    /// Error 51% or more: the maximum penalty K.
+    SeverePenalty,
+}
+
+impl std::fmt::Display for Zone {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Win => write!(formatter, "Zone 1 (Win)"),
+            Self::Neutral => write!(formatter, "Zone 0 (Neutral)"),
+            Self::MildPenalty => write!(formatter, "Zone 2 (Mild Penalty)"),
+            Self::SeverePenalty => write!(formatter, "Zone 3 (Severe Penalty)"),
+        }
+    }
+}
+
+/// Returns the Advanced `(zone, K, Sa)` tuple for a rounded error percentage.
+///
+/// The table is deliberately discrete and deterministic. Values above 50%
+/// all use the severe-penalty bucket, so callers do not need to cap the raw
+/// relative error before selecting a zone.
+#[must_use]
+pub fn advanced_k_sa(error_pct: u32) -> (Zone, f64, f64) {
+    match error_pct {
+        0 => (Zone::Win, 45.0, 1.0),
+        1 => (Zone::Win, 42.75, 1.0),
+        2..=3 => (Zone::Win, 40.50, 1.0),
+        4..=5 => (Zone::Win, 38.25, 1.0),
+        6..=8 => (Zone::Win, 36.0, 1.0),
+        9..=10 => (Zone::Neutral, 0.0, 0.0),
+        11..=20 => (Zone::MildPenalty, 15.0, 0.0),
+        21..=30 => (Zone::MildPenalty, 25.0, 0.0),
+        31..=50 => (Zone::MildPenalty, 30.0, 0.0),
+        _ => (Zone::SeverePenalty, 45.0, 0.0),
+    }
+}
+
+/// Computes the exact non-negative relative error percentage.
+///
+/// For a zero actual value, zero prediction is exact and any other prediction
+/// is assigned 100% error, matching the Advanced evaluation specification.
+#[must_use]
+pub fn advanced_relative_error_pct(predicted: Decimal, actual: Decimal) -> Decimal {
+    if actual.is_zero() {
+        if predicted.is_zero() {
+            Decimal::ZERO
+        } else {
+            Decimal::from(100)
+        }
+    } else {
+        ((predicted - actual).abs() / actual.abs()) * Decimal::from(100)
+    }
+}
+
+/// Rounds a relative error to the integer used by [`advanced_k_sa`].
+///
+/// Decimal rounding uses half-away-from-zero. Relative errors are
+/// non-negative, so `4.5` becomes `5`. Values that exceed `u32` are safely
+/// represented as `u32::MAX`, which is already in the severe-penalty bucket.
+#[must_use]
+pub fn advanced_error_pct(predicted: Decimal, actual: Decimal) -> u32 {
+    advanced_relative_error_pct(predicted, actual)
+        .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+        .to_u32()
+        .unwrap_or(u32::MAX)
+}
+
+/// The complete result of an Advanced ELO update.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AdvancedEloResult {
+    /// Shared guarded ELO result.
+    pub elo: EloResult,
+    /// Exact relative error before zone rounding.
+    #[serde(with = "rust_decimal::serde::str")]
+    pub relative_error_pct: Decimal,
+    /// Integer error percentage used by the zone lookup.
+    pub error_pct: u32,
+    /// Zone selected from the rounded error percentage.
+    pub zone: Zone,
+    /// K selected from the zone table.
+    pub k: f64,
+    /// Sa selected from the zone table.
+    pub sa: f64,
+}
+
+impl std::fmt::Display for AdvancedEloResult {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "  Relative Error     : {}%\n  Rounded Error      : {}%\n  Zone               : {}\n  K                  : {:.2}\n  Sa                 : {}\n  Expected Score (Ea): {:.6}\n  Raw Point Delta    : {:+.4}\n  Player New ELO     : {:.2}\n  Question New ELO   : {:.2}",
+            self.relative_error_pct,
+            self.error_pct,
+            self.zone,
+            self.k,
+            self.sa,
+            self.elo.expected_score,
+            self.elo.point_delta,
+            self.elo.player_new_elo,
+            self.elo.question_new_elo,
+        )
+    }
+}
+
+/// Calculates the Advanced ELO update from a prediction and its actual value.
+///
+/// The relative error is calculated with exact decimals, rounded only for the
+/// zone lookup, and then passed to the shared guarded ELO formula.
+#[must_use]
+pub fn advanced_elo_update(
+    player_elo: f64,
+    question_elo: f64,
+    predicted: Decimal,
+    actual: Decimal,
+) -> AdvancedEloResult {
+    let relative_error_pct = advanced_relative_error_pct(predicted, actual);
+    let error_pct = advanced_error_pct(predicted, actual);
+    let (zone, k, sa) = advanced_k_sa(error_pct);
+    let elo = compute_elo(player_elo, question_elo, k, sa);
+
+    AdvancedEloResult {
+        elo,
+        relative_error_pct,
+        error_pct,
+        zone,
+        k,
+        sa,
+    }
+}
+
+/// Calculates Advanced ELO directly from validated domain values.
+#[must_use]
+pub fn advanced_prediction_elo_update(
+    player_elo: f64,
+    question_elo: f64,
+    prediction: &AdvancedPrediction,
+    actual: &AdvancedActualValue,
+) -> AdvancedEloResult {
+    advanced_elo_update(player_elo, question_elo, prediction.value, actual.value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
+        advanced_elo_update, advanced_error_pct, advanced_k_sa, advanced_relative_error_pct,
         basic_mcq_elo_update, clamp_player_elo, clamp_question_elo, compute_elo, evaluate_answer,
-        expected_score, mcq_elo_update, score, score_answer, BasicRewardInput, BASIC_ELO_K,
-        CORRECT_SCORE, INCORRECT_SCORE, MAX_BASIC_REWARD, MIN_BASIC_REWARD, PLAYER_ELO_MAX,
-        PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
+        expected_score, mcq_elo_update, score, score_answer, Zone, BASIC_ELO_K, CORRECT_SCORE,
+        INCORRECT_SCORE, PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
     };
     use crate::quiz::basic::{
         IntendedQuestionSeconds, McqAnswer, McqOption, McqQuestion, SpecificationTopic,
     };
+    use rust_decimal::Decimal;
     use serde::Deserialize;
     use uuid::Uuid;
-
-    #[test]
-    fn accepts_approved_basic_reward_boundaries() {
-        assert_eq!(BasicRewardInput::new(MIN_BASIC_REWARD).unwrap().get(), 5);
-        assert_eq!(BasicRewardInput::new(MAX_BASIC_REWARD).unwrap().get(), 10);
-    }
-
-    #[test]
-    fn rejects_rewards_outside_approved_range() {
-        assert!(BasicRewardInput::new(MIN_BASIC_REWARD - 1).is_err());
-        assert!(BasicRewardInput::new(MAX_BASIC_REWARD + 1).is_err());
-        assert!(BasicRewardInput::new(-10).is_err());
-    }
-
-    #[test]
-    fn reward_deserialization_preserves_approved_boundaries() {
-        assert_eq!(
-            serde_json::from_str::<BasicRewardInput>("5")
-                .expect("minimum reward deserializes")
-                .get(),
-            MIN_BASIC_REWARD
-        );
-        assert_eq!(
-            serde_json::from_str::<BasicRewardInput>("10")
-                .expect("maximum reward deserializes")
-                .get(),
-            MAX_BASIC_REWARD
-        );
-        assert!(serde_json::from_str::<BasicRewardInput>("4").is_err());
-        assert!(serde_json::from_str::<BasicRewardInput>("11").is_err());
-    }
 
     fn id(value: u128) -> Uuid {
         Uuid::from_u128(value)
@@ -320,9 +368,8 @@ mod tests {
     }
 
     #[test]
-    fn score_awards_reward_only_for_the_eligible_answer() {
+    fn score_returns_binary_outcome_for_the_eligible_answer() {
         let question = question();
-        let reward = BasicRewardInput::new(7).expect("approved reward");
         let correct = McqAnswer {
             question_id: id(1),
             selected_option_id: Some(id(2)),
@@ -332,29 +379,23 @@ mod tests {
             selected_option_id: Some(id(3)),
         };
 
-        assert_eq!(score(&question, correct, reward), Ok(7));
-        assert_eq!(score(&question, incorrect, reward), Ok(0));
+        assert_eq!(score(&question, correct), Ok(CORRECT_SCORE));
+        assert_eq!(score(&question, incorrect), Ok(INCORRECT_SCORE));
         assert!(
             evaluate_answer(&question, correct)
                 .expect("valid answer")
                 .is_correct
         );
         assert_eq!(
-            score_answer(&question, correct, reward)
+            score_answer(&question, correct)
                 .expect("scored answer")
                 .score,
             CORRECT_SCORE
         );
-        assert_eq!(
-            score_answer(&question, correct, reward)
-                .expect("scored answer")
-                .reward,
-            7
-        );
     }
 
     #[test]
-    fn property_score_is_bounded_and_monotonic_for_all_integer_inputs() {
+    fn score_is_always_zero_or_one() {
         let question = question();
         let correct = McqAnswer {
             question_id: id(1),
@@ -364,22 +405,8 @@ mod tests {
             question_id: id(1),
             selected_option_id: Some(id(3)),
         };
-        let mut previous = 0;
-
-        for value in -20..=40 {
-            match BasicRewardInput::new(value) {
-                Ok(reward) => {
-                    let correct_score = score(&question, correct, reward).expect("valid score");
-                    let incorrect_score = score(&question, incorrect, reward).expect("valid score");
-                    assert_eq!(correct_score, value);
-                    assert_eq!(incorrect_score, INCORRECT_SCORE);
-                    assert!((MIN_BASIC_REWARD..=MAX_BASIC_REWARD).contains(&correct_score));
-                    assert!(correct_score >= previous);
-                    previous = correct_score;
-                }
-                Err(_) => assert!(!(MIN_BASIC_REWARD..=MAX_BASIC_REWARD).contains(&value)),
-            }
-        }
+        assert!([INCORRECT_SCORE, CORRECT_SCORE].contains(&score(&question, correct).unwrap()));
+        assert!([INCORRECT_SCORE, CORRECT_SCORE].contains(&score(&question, incorrect).unwrap()));
     }
 
     #[test]
@@ -396,16 +423,13 @@ mod tests {
             },
         ];
 
-        for reward_value in MIN_BASIC_REWARD..=MAX_BASIC_REWARD {
-            let reward = BasicRewardInput::new(reward_value).expect("approved reward");
-            for answer in answers {
-                let expected = score_answer(&question, answer, reward).expect("valid score");
-                for _ in 0..128 {
-                    assert_eq!(
-                        score_answer(&question, answer, reward).expect("valid score"),
-                        expected
-                    );
-                }
+        for answer in answers {
+            let expected = score_answer(&question, answer).expect("valid score");
+            for _ in 0..128 {
+                assert_eq!(
+                    score_answer(&question, answer).expect("valid score"),
+                    expected
+                );
             }
         }
     }
@@ -533,10 +557,8 @@ mod tests {
     struct GoldenCase {
         name: String,
         selected_option_id: Uuid,
-        reward: i32,
         expected_correct: bool,
         expected_score: i32,
-        expected_reward: i32,
     }
 
     #[derive(Deserialize)]
@@ -546,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_fixtures_produce_approved_score_and_reward() {
+    fn golden_fixtures_produce_approved_binary_score() {
         let fixture: GoldenFixture =
             serde_json::from_str(include_str!("fixtures/basic_scoring.json"))
                 .expect("valid Basic Quiz scoring fixture");
@@ -556,8 +578,7 @@ mod tests {
                 question_id: fixture.question.id,
                 selected_option_id: Some(case.selected_option_id),
             };
-            let reward = BasicRewardInput::try_from(case.reward).expect("approved reward input");
-            let scored = score_answer(&fixture.question, answer, reward)
+            let scored = score_answer(&fixture.question, answer)
                 .unwrap_or_else(|error| panic!("{}: {error}", case.name));
 
             assert_eq!(
@@ -566,7 +587,66 @@ mod tests {
                 case.name
             );
             assert_eq!(scored.score, case.expected_score, "{}", case.name);
-            assert_eq!(scored.reward, case.expected_reward, "{}", case.name);
         }
+    }
+
+    #[test]
+    fn advanced_zone_table_matches_all_boundary_buckets() {
+        let cases = [
+            (0, Zone::Win, 45.0, 1.0),
+            (1, Zone::Win, 42.75, 1.0),
+            (2, Zone::Win, 40.50, 1.0),
+            (4, Zone::Win, 38.25, 1.0),
+            (6, Zone::Win, 36.0, 1.0),
+            (9, Zone::Neutral, 0.0, 0.0),
+            (11, Zone::MildPenalty, 15.0, 0.0),
+            (21, Zone::MildPenalty, 25.0, 0.0),
+            (31, Zone::MildPenalty, 30.0, 0.0),
+            (51, Zone::SeverePenalty, 45.0, 0.0),
+        ];
+
+        for (error_pct, expected_zone, expected_k, expected_sa) in cases {
+            let (zone, k, sa) = advanced_k_sa(error_pct);
+            assert_eq!(zone, expected_zone, "error_pct={error_pct}");
+            assert_eq!(k, expected_k, "error_pct={error_pct}");
+            assert_eq!(sa, expected_sa, "error_pct={error_pct}");
+        }
+    }
+
+    #[test]
+    fn advanced_error_uses_exact_decimal_math_and_half_away_rounding() {
+        let repeating_error = advanced_relative_error_pct(Decimal::new(5, 7), Decimal::new(9, 7));
+        assert!(repeating_error > Decimal::from(44));
+        assert!(repeating_error < Decimal::from(45));
+        assert_eq!(
+            advanced_error_pct(Decimal::new(5, 7), Decimal::new(9, 7)),
+            44
+        );
+        assert_eq!(advanced_error_pct(Decimal::from(5), Decimal::from(5)), 0);
+        assert_eq!(
+            advanced_error_pct(Decimal::new(5225, 3), Decimal::from(5)),
+            5
+        );
+        assert_eq!(advanced_error_pct(Decimal::ZERO, Decimal::ZERO), 0);
+        assert_eq!(advanced_error_pct(Decimal::from(1), Decimal::ZERO), 100);
+    }
+
+    #[test]
+    fn advanced_elo_uses_zone_outcome_and_shared_guardrails() {
+        let win = advanced_elo_update(1400.0, 1600.0, Decimal::from(5), Decimal::from(5));
+        assert_eq!(win.zone, Zone::Win);
+        assert!(win.elo.point_delta > 0.0);
+
+        let neutral = advanced_elo_update(1400.0, 1600.0, Decimal::new(545, 2), Decimal::from(5));
+        assert_eq!(neutral.zone, Zone::Neutral);
+        assert_eq!(neutral.elo.point_delta, 0.0);
+
+        let severe = advanced_elo_update(1400.0, 1600.0, Decimal::from(8), Decimal::from(5));
+        assert_eq!(severe.zone, Zone::SeverePenalty);
+        assert!(severe.elo.point_delta < 0.0);
+
+        let bounded = advanced_elo_update(3000.0, 2399.0, Decimal::from(8), Decimal::from(5));
+        assert!(bounded.elo.player_new_elo < PLAYER_ELO_MAX);
+        assert_eq!(bounded.elo.question_new_elo, QUESTION_ELO_MAX);
     }
 }
