@@ -14,6 +14,7 @@ use orion_db::{
     repositories::ResearchRepository,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{request_id, routes::auth::AuthenticatedUser, state::AppState, ApiProblem};
@@ -31,8 +32,12 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_published).post(create_draft))
         .route("/drafts", get(list_own_drafts))
+        .route("/review-queue", get(review_queue))
+        .route("/reviews/queue", get(review_queue))
+        .route("/{research_id}/revisions", post(create_revision))
         .route("/{research_id}", get(get_research).put(update_draft))
         .route("/{research_id}/submission", post(submit_paper))
+        .route("/{research_id}/reviews", post(review))
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +47,66 @@ pub struct ResearchDraftRequest {
     #[serde(rename = "abstract", alias = "abstract_text", default)]
     pub abstract_text: String,
     pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResearchRevisionRequest {
+    /// The caller supplies this UUID so retries retain the same version
+    /// identity and therefore the same downstream idempotency boundary.
+    pub new_paper_id: Uuid,
+    pub title: String,
+    #[serde(rename = "abstract", alias = "abstract_text", default)]
+    pub abstract_text: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResearchReviewRequest {
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub recommendation: String,
+    #[serde(alias = "feedback")]
+    pub comments: Option<String>,
+    /// The canonical structured rubric. `evaluation_result` remains accepted
+    /// as a transport-compatible alias for clients that already use the DB
+    /// column name.
+    pub evaluation: Option<ResearchEvaluationPayload>,
+    pub evaluation_result: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchEvaluationPayload {
+    pub rubric_version: u16,
+    pub evaluated_content_version: u32,
+    pub scores: ResearchRubricScores,
+    pub overall_score: u8,
+    pub recommendation: String,
+    pub rationale: String,
+    pub evidence: Vec<ResearchEvidence>,
+    pub strengths: Vec<String>,
+    pub concerns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchRubricScores {
+    pub relevance: u8,
+    pub methodology: u8,
+    pub evidence: u8,
+    pub originality: u8,
+    pub clarity_and_reproducibility: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchEvidence {
+    pub reference: String,
+    pub finding: String,
+}
+
+struct PreparedResearchReview {
+    score: f64,
+    recommendation: String,
+    evaluation_result: Value,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -275,6 +340,271 @@ async fn list_own_drafts(
         has_more,
     };
     Ok(crate::success(&headers, response))
+}
+
+/// Returns the claimable research queue to reviewers only. Both submitted and
+/// already-claimed papers remain visible so a reviewer can resume work after a
+/// retry or worker interruption.
+async fn review_queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
+    Query(query): Query<PaginationQuery>,
+) -> Result<impl IntoResponse, ApiProblem> {
+    user.require_reviewer()?;
+    let request_id = request_id(&headers);
+    let (limit, offset) = pagination(query, request_id)?;
+    let repository = ResearchRepository::new(state.db);
+    let mut papers = repository
+        .list_pending_reviews(i64::from(limit) + 1, offset)
+        .await
+        .map_err(|error| database_problem(error, request_id))?;
+    let has_more = papers.len() > usize::try_from(limit).expect("validated page limit fits");
+    if has_more {
+        papers.pop();
+    }
+
+    let response = ResearchListResponse {
+        items: papers
+            .into_iter()
+            .map(ResearchPaperResponse::from)
+            .collect(),
+        limit,
+        offset: u64::try_from(offset).expect("validated page offset fits in u64"),
+        has_more,
+    };
+    Ok(private_success(&headers, response))
+}
+
+async fn create_revision(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(research_id): Path<String>,
+    user: AuthenticatedUser,
+    ResearchJson(request): ResearchJson<ResearchRevisionRequest>,
+) -> Result<impl IntoResponse, ApiProblem> {
+    let request_id = request_id(&headers);
+    let source_paper_id = parse_research_id(&research_id, request_id)?;
+    let input = validate_request(
+        ResearchDraftRequest {
+            title: request.title,
+            abstract_text: request.abstract_text,
+            content: request.content,
+        },
+        request_id,
+    )?;
+    let repository = ResearchRepository::new(state.db);
+    let paper = repository
+        .create_revision(
+            source_paper_id,
+            user.user.id,
+            request.new_paper_id,
+            &input.title,
+            &input.abstract_text,
+            &input.content,
+        )
+        .await
+        .map_err(|error| database_problem(error, request_id))?
+        .ok_or_else(|| conflict(request_id, "research revision could not be created"))?;
+    Ok(private_success(
+        &headers,
+        ResearchPaperResponse::from(paper),
+    ))
+}
+
+/// Accepts a review only from an authorized reviewer. The claim from
+/// `submitted` to `under_review` and the review-backed decision are each
+/// conditional database writes, so retries cannot skip a lifecycle state.
+async fn review(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(research_id): Path<String>,
+    user: AuthenticatedUser,
+    ResearchJson(request): ResearchJson<ResearchReviewRequest>,
+) -> Result<impl IntoResponse, ApiProblem> {
+    user.require_reviewer()?;
+    let request_id = request_id(&headers);
+    let prepared = prepare_review(&request, request_id)?;
+    let research_id = parse_research_id(&research_id, request_id)?;
+    let reviewer_id = user.user.id;
+    let repository = ResearchRepository::new(state.db);
+    let paper = repository
+        .find_by_id(research_id)
+        .await
+        .map_err(|error| database_problem(error, request_id))?
+        .ok_or_else(|| not_found(request_id))?;
+    if paper.author_id == reviewer_id {
+        return Err(ApiProblem::new(
+            StatusCode::FORBIDDEN,
+            ErrorCode::Forbidden,
+            "a paper author cannot review their own paper",
+        )
+        .with_request_id(request_id));
+    }
+
+    if paper.status == "submitted" {
+        repository
+            .begin_review(research_id)
+            .await
+            .map_err(|error| database_problem(error, request_id))?;
+    } else if paper.status != "under_review" {
+        return Err(conflict(request_id, "research is not available for review"));
+    }
+
+    let paper = repository
+        .complete_review(
+            research_id,
+            reviewer_id,
+            Some(prepared.score),
+            &prepared.recommendation,
+            request.comments.as_deref(),
+            Some(&prepared.evaluation_result),
+        )
+        .await
+        .map_err(|error| database_problem(error, request_id))?
+        .ok_or_else(|| conflict(request_id, "research review could not be completed"))?;
+    Ok(private_success(
+        &headers,
+        ResearchPaperResponse::from(paper),
+    ))
+}
+
+fn prepare_review(
+    request: &ResearchReviewRequest,
+    request_id: orion_common::RequestId,
+) -> Result<PreparedResearchReview, ApiProblem> {
+    let mut evaluation = if let Some(evaluation) = &request.evaluation {
+        evaluation.clone()
+    } else if let Some(result) = &request.evaluation_result {
+        serde_json::from_value::<ResearchEvaluationPayload>(result.clone()).map_err(|_| {
+            validation(
+                request_id,
+                "evaluation_result must contain the complete research rubric",
+            )
+        })?
+    } else {
+        return Err(validation(
+            request_id,
+            "a structured research evaluation is required",
+        ));
+    };
+
+    if request
+        .comments
+        .as_deref()
+        .is_some_and(|comments| comments.trim().is_empty())
+    {
+        return Err(validation(request_id, "review comments must not be empty"));
+    }
+    validate_evaluation(&evaluation, request_id)?;
+    let recommendation = canonical_recommendation(&evaluation.recommendation)
+        .ok_or_else(|| validation(request_id, "review recommendation is invalid"))?;
+    if !request.recommendation.trim().is_empty()
+        && canonical_recommendation(&request.recommendation) != Some(recommendation)
+    {
+        return Err(validation(
+            request_id,
+            "review recommendation does not match the rubric evaluation",
+        ));
+    }
+    evaluation.recommendation = recommendation.to_owned();
+
+    let score = f64::from(evaluation.overall_score);
+    if request
+        .score
+        .is_some_and(|requested| !requested.is_finite() || (requested - score).abs() > f64::EPSILON)
+    {
+        return Err(validation(
+            request_id,
+            "review score does not match the rubric evaluation",
+        ));
+    }
+
+    let evaluation_result = serde_json::to_value(&evaluation)
+        .map_err(|_| validation(request_id, "research evaluation could not be serialized"))?;
+    Ok(PreparedResearchReview {
+        score,
+        recommendation: recommendation.to_owned(),
+        evaluation_result,
+    })
+}
+
+fn validate_evaluation(
+    evaluation: &ResearchEvaluationPayload,
+    request_id: orion_common::RequestId,
+) -> Result<(), ApiProblem> {
+    if evaluation.rubric_version != 1 {
+        return Err(validation(
+            request_id,
+            "research rubric version is unsupported",
+        ));
+    }
+    if evaluation.evaluated_content_version == 0 {
+        return Err(validation(
+            request_id,
+            "evaluated content version must be greater than zero",
+        ));
+    }
+    if [
+        evaluation.scores.relevance,
+        evaluation.scores.methodology,
+        evaluation.scores.evidence,
+        evaluation.scores.originality,
+        evaluation.scores.clarity_and_reproducibility,
+    ]
+    .into_iter()
+    .any(|score| score > 100)
+    {
+        return Err(validation(
+            request_id,
+            "rubric scores must be between 0 and 100",
+        ));
+    }
+    if evaluation.overall_score != weighted_score(&evaluation.scores) {
+        return Err(validation(
+            request_id,
+            "overall score does not match the weighted rubric score",
+        ));
+    }
+    if evaluation.rationale.trim().is_empty() {
+        return Err(validation(
+            request_id,
+            "evaluation rationale must not be empty",
+        ));
+    }
+    if evaluation.evidence.is_empty()
+        || evaluation
+            .evidence
+            .iter()
+            .any(|item| item.reference.trim().is_empty() || item.finding.trim().is_empty())
+    {
+        return Err(validation(request_id, "evaluation evidence is incomplete"));
+    }
+    if feedback_is_invalid(&evaluation.strengths) || feedback_is_invalid(&evaluation.concerns) {
+        return Err(validation(request_id, "evaluation feedback is incomplete"));
+    }
+    Ok(())
+}
+
+fn weighted_score(scores: &ResearchRubricScores) -> u8 {
+    ((u32::from(scores.relevance) * 15
+        + u32::from(scores.methodology) * 25
+        + u32::from(scores.evidence) * 30
+        + u32::from(scores.originality) * 15
+        + u32::from(scores.clarity_and_reproducibility) * 15)
+        / 100) as u8
+}
+
+fn feedback_is_invalid(items: &[String]) -> bool {
+    items.is_empty() || items.iter().any(|item| item.trim().is_empty())
+}
+
+fn canonical_recommendation(value: &str) -> Option<&'static str> {
+    match value.trim() {
+        "approve" | "approved" => Some("approve"),
+        "reject" | "rejected" => Some("reject"),
+        _ => None,
+    }
 }
 
 async fn ensure_author_can_edit(
@@ -529,9 +859,10 @@ mod tests {
     use orion_common::RequestId;
 
     use super::{
-        author_edit_access, can_read_research, private_success, sanitize_text, EditAccess,
-        ResearchDraftRequest, ResearchJson, ResearchPaper, ResearchPaperResponse,
-        PRIVATE_CACHE_CONTROL,
+        author_edit_access, can_read_research, prepare_review, private_success, sanitize_text,
+        EditAccess, ResearchDraftRequest, ResearchEvaluationPayload, ResearchEvidence,
+        ResearchJson, ResearchPaper, ResearchPaperResponse, ResearchReviewRequest,
+        ResearchRubricScores, PRIVATE_CACHE_CONTROL,
     };
 
     fn paper(status: &str, author_id: uuid::Uuid) -> ResearchPaper {
@@ -713,5 +1044,59 @@ mod tests {
         assert!(!can_read_research(&draft, None));
         assert!(can_read_research(&published, None));
         assert!(can_read_research(&published, Some(other_user_id)));
+    }
+
+    fn evaluation() -> ResearchEvaluationPayload {
+        ResearchEvaluationPayload {
+            rubric_version: 1,
+            evaluated_content_version: 7,
+            scores: ResearchRubricScores {
+                relevance: 92,
+                methodology: 92,
+                evidence: 92,
+                originality: 92,
+                clarity_and_reproducibility: 92,
+            },
+            overall_score: 92,
+            recommendation: "approved".to_owned(),
+            rationale: "The evidence supports the conclusion.".to_owned(),
+            evidence: vec![ResearchEvidence {
+                reference: "Results".to_owned(),
+                finding: "The reported result is reproducible.".to_owned(),
+            }],
+            strengths: vec!["Clear methodology".to_owned()],
+            concerns: vec!["The sample is limited".to_owned()],
+        }
+    }
+
+    #[test]
+    fn prepares_canonical_persisted_evaluation() {
+        let request = ResearchReviewRequest {
+            score: None,
+            recommendation: String::new(),
+            comments: Some("Reviewed against the rubric".to_owned()),
+            evaluation: Some(evaluation()),
+            evaluation_result: None,
+        };
+        let request_id = RequestId::from_uuid(uuid::Uuid::new_v4());
+        let prepared = prepare_review(&request, request_id).expect("valid evaluation");
+        assert_eq!(prepared.score, 92.0);
+        assert_eq!(prepared.recommendation, "approve");
+        assert_eq!(prepared.evaluation_result["evaluated_content_version"], 7);
+        assert_eq!(prepared.evaluation_result["overall_score"], 92);
+        assert_eq!(prepared.evaluation_result["recommendation"], "approve");
+    }
+
+    #[test]
+    fn rejects_score_that_does_not_match_rubric() {
+        let request = ResearchReviewRequest {
+            score: Some(91.0),
+            recommendation: "approve".to_owned(),
+            comments: None,
+            evaluation: Some(evaluation()),
+            evaluation_result: None,
+        };
+        let request_id = RequestId::from_uuid(uuid::Uuid::new_v4());
+        assert!(prepare_review(&request, request_id).is_err());
     }
 }

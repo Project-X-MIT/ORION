@@ -62,6 +62,18 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
+    pub fn require_reviewer(&self) -> Result<(), ApiProblem> {
+        if self.identity.role == Role::Reviewer {
+            Ok(())
+        } else {
+            Err(ApiProblem::new(
+                StatusCode::FORBIDDEN,
+                orion_common::ErrorCode::Forbidden,
+                "you do not have permission for this operation",
+            ))
+        }
+    }
+
     pub fn require_role(&self, role: Role) -> Result<(), ApiProblem> {
         if self.identity.role == role || self.identity.role == Role::Admin {
             Ok(())
@@ -443,6 +455,11 @@ mod tests {
         assert!(authenticated_user(Role::Admin)
             .require_role(Role::Reviewer)
             .is_ok());
+
+        let admin_reviewer = authenticated_user(Role::Admin)
+            .require_reviewer()
+            .expect_err("research reviewers must have the exact reviewer role");
+        assert_eq!(admin_reviewer.status, StatusCode::FORBIDDEN);
 
         let forbidden = authenticated_user(Role::User)
             .require_role(Role::Reviewer)
