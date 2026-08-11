@@ -394,12 +394,26 @@ async fn apply_elo_delta_for_source(
     Ok(next)
 }
 
-/// Applies a research award and records it under the paper idempotency key.
+/// Applies a research award and records it under the supplied idempotency
+/// key. The caller owns the source identity and must keep the key stable for
+/// retries of the same business event.
 pub async fn award_elo_for_source(
     transaction: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
     award: i32,
     source_id: Uuid,
+) -> Result<i32> {
+    let idempotency_key = format!("research-paper:{source_id}:elo-award");
+    award_elo_for_source_with_key(transaction, user_id, award, source_id, &idempotency_key).await
+}
+
+/// Applies a research award with an explicit per-source idempotency key.
+pub async fn award_elo_for_source_with_key(
+    transaction: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    award: i32,
+    source_id: Uuid,
+    idempotency_key: &str,
 ) -> Result<i32> {
     apply_elo_delta_for_source(
         transaction,
@@ -407,7 +421,7 @@ pub async fn award_elo_for_source(
         award,
         "research_review",
         source_id,
-        "user",
+        idempotency_key,
     )
     .await
 }

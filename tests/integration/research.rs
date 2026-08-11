@@ -1,6 +1,7 @@
 use std::{env, error::Error};
 
 use orion_db::{models::ResearchPaperStatus, pool as db_pool, repositories::ResearchRepository};
+use orion_worker::jobs::research_review::process_research_award;
 use serde_json::json;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -102,10 +103,30 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .is_some());
     assert!(repository
+        .find_draft_by_id(draft.id, reviewer_id)
+        .await?
+        .is_none());
+    assert!(repository
         .research_by_author(author_id, 10, 0)
         .await?
         .iter()
         .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .list_drafts_by_author_id(author_id, 10, 0)
+        .await?
+        .iter()
+        .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .list_drafts_by_author_id(reviewer_id, 10, 0)
+        .await?
+        .is_empty());
+    // The public repository surface must not expose an unpublished paper.
+    assert!(repository.find_published_by_id(draft.id).await?.is_none());
+    assert!(repository
+        .list_published(10, 0)
+        .await?
+        .iter()
+        .all(|paper| paper.id != draft.id));
 
     let edited = repository
         .update_draft(
@@ -126,11 +147,33 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .expect("draft should submit");
     assert_eq!(submitted.parsed_status()?, ResearchPaperStatus::Submitted);
     assert!(submitted.submitted_at.is_some());
+    assert_eq!(
+        repository
+            .find_by_id(draft.id)
+            .await?
+            .unwrap()
+            .parsed_status()?,
+        ResearchPaperStatus::Submitted
+    );
+    assert!(repository.find_published_by_id(draft.id).await?.is_none());
+    assert!(repository
+        .list_drafts_by_author_id(author_id, 10, 0)
+        .await?
+        .iter()
+        .all(|paper| paper.id != draft.id));
     assert!(repository
         .submitted_papers(10, 0)
         .await?
         .iter()
         .any(|paper| paper.id == draft.id));
+    assert!(repository
+        .submit_for_review(draft.id, reviewer_id)
+        .await?
+        .is_none());
+    assert!(repository
+        .submit_for_review(draft.id, author_id)
+        .await?
+        .is_none());
     assert!(repository
         .update_draft(
             draft.id,
@@ -143,6 +186,10 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .is_none());
     assert!(repository
         .update_draft(draft.id, reviewer_id, "wrong owner", "", "content")
+        .await?
+        .is_none());
+    assert!(repository
+        .find_draft_by_id(draft.id, reviewer_id)
         .await?
         .is_none());
 
@@ -159,6 +206,12 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         ResearchPaperStatus::UnderReview
     );
     assert!(under_review.under_review_at.is_some());
+    assert_eq!(repository.pending_review_count().await?, 1);
+    assert!(repository
+        .list_pending_reviews(10, 0)
+        .await?
+        .iter()
+        .any(|paper| paper.id == draft.id));
     assert!(repository
         .submit_for_review(draft.id, author_id)
         .await?
@@ -180,7 +233,26 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     assert!(invalid_transition.is_err());
 
     // Review persistence, evaluation aggregation, and decision auditability.
-    let evaluation = json!({ "rubric": "complete", "confidence": 0.98 });
+    let evaluation = json!({
+        "rubric_version": 1,
+        "evaluated_content_version": 7,
+        "scores": {
+            "relevance": 92,
+            "methodology": 92,
+            "evidence": 92,
+            "originality": 92,
+            "clarity_and_reproducibility": 92
+        },
+        "overall_score": 92,
+        "recommendation": "approve",
+        "rationale": "The evidence supports the conclusion.",
+        "evidence": [{
+            "reference": "Results",
+            "finding": "The reported result is reproducible."
+        }],
+        "strengths": ["Clear methodology"],
+        "concerns": ["The sample is limited"]
+    });
     let approved = repository
         .complete_review(
             draft.id,
@@ -204,7 +276,34 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     assert_eq!(reviews[0].reviewer_id, reviewer_id);
     assert_eq!(reviews[0].score, Some(92.0));
     assert_eq!(reviews[0].recommendation, "approve");
-    assert!(reviews[0].reviewed_at >= reviews[0].created_at);
+    assert_eq!(reviews[0].comments.as_deref(), Some("Strong result"));
+    assert_eq!(reviews[0].evaluation_result, Some(evaluation.clone()));
+    assert_eq!(
+        reviews[0].evaluation_result.as_ref().unwrap()["rubric_version"],
+        1
+    );
+    assert_eq!(
+        reviews[0].evaluation_result.as_ref().unwrap()["evaluated_content_version"],
+        7
+    );
+    assert!(reviews[0].created_at <= reviews[0].reviewed_at);
+    assert!(reviews[0].reviewed_at <= reviews[0].updated_at);
+    let decision_notification: (serde_json::Value, String) = sqlx::query_as(
+        "SELECT payload, status
+         FROM outbox_events
+         WHERE event_type = 'orion.notification.requested'
+           AND payload ->> 'deduplication_key' = $1",
+    )
+    .bind(format!(
+        "research-review:{}:review:{}:decision-notification",
+        draft.id, review_id
+    ))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(decision_notification.0["recipient_id"], json!(author_id));
+    assert_eq!(decision_notification.0["kind"], "research_decision");
+    assert_eq!(decision_notification.0["title"], "Research paper approved");
+    assert_eq!(decision_notification.1, "pending");
     assert_eq!(repository.approve_paper(draft.id).await?, None);
 
     let published = repository
@@ -212,13 +311,132 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .expect("approved paper should publish");
     assert_eq!(published.parsed_status()?, ResearchPaperStatus::Published);
+    assert_eq!(published.content, approved.content);
     assert!(published.published_at.is_some());
+    let published_evaluated_content_version: i32 = sqlx::query_scalar(
+        "SELECT (payload ->> 'evaluated_content_version')::integer
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(draft.id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(published_evaluated_content_version, 7);
+    assert_eq!(repository.pending_review_count().await?, 0);
+    assert!(repository
+        .update_draft(
+            draft.id,
+            author_id,
+            "must not change after publication",
+            "must not change",
+            "must not change",
+        )
+        .await?
+        .is_none());
+    let published_content_mutation = sqlx::query(
+        "UPDATE research_papers SET content = 'must not change directly' WHERE id = $1",
+    )
+    .bind(draft.id)
+    .execute(&pool)
+    .await;
+    assert!(published_content_mutation.is_err());
     assert!(repository.find_published_by_id(draft.id).await?.is_some());
     assert!(repository
         .published_research(10, 0)
         .await?
         .iter()
         .any(|paper| paper.id == draft.id));
+
+    // A re-review starts from a new paper identity. The decided source stays
+    // immutable, while the new version receives its own review and request
+    // idempotency identity.
+    let revision_id = Uuid::new_v4();
+    let revision = repository
+        .create_revision(
+            draft.id,
+            author_id,
+            revision_id,
+            "Revised title",
+            "Revised abstract",
+            "Revised content",
+        )
+        .await?
+        .expect("published paper should create a new revision draft");
+    assert_eq!(revision.id, revision_id);
+    assert_eq!(revision.parsed_status()?, ResearchPaperStatus::Draft);
+    let retried_revision = repository
+        .create_revision(
+            draft.id,
+            author_id,
+            revision_id,
+            "Revised title",
+            "Revised abstract",
+            "Revised content",
+        )
+        .await?
+        .expect("retry should return the same revision identity");
+    assert_eq!(retried_revision.id, revision.id);
+    assert_eq!(retried_revision.content, revision.content);
+    assert_eq!(
+        repository.find_by_id(draft.id).await?.unwrap().status,
+        "published"
+    );
+    repository
+        .submit_for_review(revision_id, author_id)
+        .await?
+        .expect("revision should submit");
+    repository
+        .begin_review(revision_id)
+        .await?
+        .expect("revision should enter review");
+    let revision_evaluation = evaluation_json(94, "approve");
+    repository
+        .complete_review(
+            revision_id,
+            reviewer_id,
+            Some(94.0),
+            "approve",
+            Some("The revised version is ready."),
+            Some(&revision_evaluation),
+        )
+        .await?
+        .expect("revision should be approved");
+    repository
+        .publish_paper(revision_id)
+        .await?
+        .expect("approved revision should publish");
+    let original_request_key: String = sqlx::query_scalar(
+        "SELECT payload ->> 'idempotency_key'
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(draft.id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    let revision_request_key: String = sqlx::query_scalar(
+        "SELECT payload ->> 'idempotency_key'
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(revision_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_ne!(draft.id, revision_id);
+    assert_ne!(original_request_key, revision_request_key);
+    assert!(revision_request_key.contains(&revision_id.to_string()));
+    let revision_evaluated_content_version: i32 = sqlx::query_scalar(
+        "SELECT (payload ->> 'evaluated_content_version')::integer
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(revision_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(revision_evaluated_content_version, 1);
 
     let decision_mutation =
         sqlx::query("UPDATE research_papers SET decided_by = NULL WHERE id = $1")
@@ -233,6 +451,15 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
             .execute(&pool)
             .await;
     assert!(review_recommendation_mutation.is_err());
+
+    assert!(repository
+        .update_review_evaluation(review_id, reviewer_id, Some(92.0), Some(&evaluation))
+        .await?
+        .is_none());
+    assert!(repository
+        .record_evaluation_result(draft.id, Some(92.0), Some(&evaluation))
+        .await?
+        .is_none());
 
     let review_delete = sqlx::query("DELETE FROM research_reviews WHERE id = $1")
         .bind(review_id)
@@ -272,7 +499,8 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .find_review_by_id(manual_review.id)
         .await?
         .is_some());
-    let manual_evaluation = json!({ "rubric": "manual", "confidence": 0.91 });
+    assert!(repository.approve_paper(manual_paper.id).await?.is_none());
+    let manual_evaluation = evaluation_json(95, "approve");
     let updated_manual_review = repository
         .update_review_evaluation(
             manual_review.id,
@@ -287,7 +515,7 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         updated_manual_review.evaluation_result,
         Some(manual_evaluation.clone())
     );
-    let paper_evaluation = json!({ "source": "standalone-evaluator" });
+    let paper_evaluation = manual_evaluation.clone();
     let evaluated_manual_paper = repository
         .record_evaluation_result(manual_paper.id, Some(95.0), Some(&paper_evaluation))
         .await?
@@ -323,6 +551,7 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .begin_review(rejected.id)
         .await?
         .expect("rejected paper should enter review");
+    let rejected_evaluation = evaluation_json(20, "reject");
     let rejected = repository
         .complete_review(
             rejected.id,
@@ -330,7 +559,7 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
             Some(20.0),
             "reject",
             Some("Needs more evidence"),
-            None,
+            Some(&rejected_evaluation),
         )
         .await?
         .expect("under-review paper should be rejected");
@@ -410,6 +639,18 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .await?
         .expect("failure paper should enter review");
 
+    assert!(repository
+        .complete_review(
+            failure_paper.id,
+            reviewer_id,
+            Some(80.0),
+            "approve",
+            None,
+            None,
+        )
+        .await?
+        .is_none());
+
     let missing_audit_review = sqlx::query(
         "UPDATE research_papers
          SET status = 'approved', decided_by = $2
@@ -434,6 +675,7 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     .execute(&pool)
     .await?;
 
+    let failure_evaluation = evaluation_json(80, "approve");
     assert!(repository
         .complete_review(
             failure_paper.id,
@@ -441,7 +683,7 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
             Some(80.0),
             "approve",
             None,
-            None,
+            Some(&failure_evaluation),
         )
         .await
         .is_err());
@@ -462,6 +704,241 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .list_reviews_by_paper_id(failure_paper.id)
         .await?
         .is_empty());
+    let rolled_back_notifications: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM outbox_events
+         WHERE event_type = 'orion.notification.requested'
+           AND payload ->> 'deduplication_key' LIKE $1",
+    )
+    .bind(format!("research-review:{}:%", failure_paper.id))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(rolled_back_notifications, 0);
+
+    database.cleanup().await?;
+    Ok(())
+}
+
+async fn approved_research_paper(
+    repository: &ResearchRepository,
+    author_id: Uuid,
+    reviewer_id: Uuid,
+    title: &str,
+) -> Result<Uuid, sqlx::Error> {
+    let evaluation = evaluation_json(90, "approve");
+    let paper = repository
+        .create_draft(author_id, title, "Abstract", "Research content")
+        .await?;
+    repository
+        .submit_for_review(paper.id, author_id)
+        .await?
+        .expect("draft should submit");
+    repository
+        .begin_review(paper.id)
+        .await?
+        .expect("submitted paper should enter review");
+    repository
+        .complete_review(
+            paper.id,
+            reviewer_id,
+            Some(90.0),
+            "approve",
+            Some("Accepted"),
+            Some(&evaluation),
+        )
+        .await?
+        .expect("under-review paper should be approved");
+    Ok(paper.id)
+}
+
+fn evaluation_json(overall_score: u8, recommendation: &str) -> serde_json::Value {
+    json!({
+        "rubric_version": 1,
+        "evaluated_content_version": 1,
+        "scores": {
+            "relevance": overall_score,
+            "methodology": overall_score,
+            "evidence": overall_score,
+            "originality": overall_score,
+            "clarity_and_reproducibility": overall_score
+        },
+        "overall_score": overall_score,
+        "recommendation": recommendation,
+        "rationale": "The submitted research was evaluated against the complete rubric.",
+        "evidence": [{
+            "reference": "Results section",
+            "finding": "The reported result is supported by the submitted evidence."
+        }],
+        "strengths": ["The methodology is clearly described."],
+        "concerns": ["The sample size could be expanded."]
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
+) -> Result<(), Box<dyn Error>> {
+    let Some(database) = TestDatabase::create().await? else {
+        return Ok(());
+    };
+    let pool = database.pool.clone();
+    let repository = ResearchRepository::new(pool.clone());
+    let author_id = Uuid::new_v4();
+    let reviewer_id = Uuid::new_v4();
+    insert_user(&pool, author_id, "award-author").await?;
+    insert_user(&pool, reviewer_id, "award-reviewer").await?;
+
+    let paper_id =
+        approved_research_paper(&repository, author_id, reviewer_id, "Exactly once award").await?;
+    // Set up a published, approved paper without the publication request so
+    // these 100 attempts exercise the worker's concurrent insert path.
+    sqlx::query(
+        "UPDATE research_papers
+         SET status = 'published', published_at = CURRENT_TIMESTAMP
+         WHERE id = $1",
+    )
+    .bind(paper_id)
+    .execute(&pool)
+    .await?;
+    let mut attempts = Vec::with_capacity(100);
+    for _ in 0..100 {
+        let attempt_pool = pool.clone();
+        attempts.push(tokio::spawn(async move {
+            process_research_award(&attempt_pool, paper_id).await
+        }));
+    }
+    let mut enqueued = 0;
+    for attempt in attempts {
+        if attempt.await?? {
+            enqueued += 1;
+        }
+    }
+    assert_eq!(enqueued, 1, "concurrent attempts must enqueue once");
+
+    let award_state: (bool, Option<i32>) =
+        sqlx::query_as("SELECT elo_awarded, elo_award FROM research_papers WHERE id = $1")
+            .bind(paper_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(award_state, (false, None));
+    let review_id: Uuid = sqlx::query_scalar(
+        "SELECT id
+         FROM research_reviews
+         WHERE paper_id = $1 AND reviewer_id = $2",
+    )
+    .bind(paper_id)
+    .bind(reviewer_id)
+    .fetch_one(&pool)
+    .await?;
+    let event: (String, serde_json::Value, String) = sqlx::query_as(
+        "SELECT event_type, payload, status
+         FROM outbox_events
+         WHERE payload ->> 'paper_id' = $1",
+    )
+    .bind(paper_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    let request_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(paper_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        request_count, 1,
+        "100 award attempts must produce one request"
+    );
+    assert_eq!(event.0, "orion.research.elo_award.requested");
+    assert_eq!(event.1["author_id"], json!(author_id));
+    assert_eq!(event.1["paper_status"], "published");
+    assert_eq!(event.1["recommendation"], "approve");
+    assert_eq!(event.1["evaluation_score"], 90);
+    assert_eq!(event.1["evaluated_content_version"], 1);
+    assert_eq!(
+        event.1["idempotency_key"],
+        format!("research-paper:{paper_id}:review:{review_id}:elo-award")
+    );
+    assert_eq!(event.2, "pending");
+
+    let ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM rating_ledger
+         WHERE source_type = 'research_review' AND source_id = $1",
+    )
+    .bind(paper_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 0, "Phantom must not apply Yash's Elo");
+
+    let retry_paper_id =
+        approved_research_paper(&repository, author_id, reviewer_id, "Retryable award").await?;
+    let failure_function = format!(
+        "CREATE OR REPLACE FUNCTION research_outbox_test_force_failure()
+         RETURNS TRIGGER LANGUAGE plpgsql AS $$
+         BEGIN
+             IF NEW.payload ->> 'paper_id' = '{}' THEN
+                 RAISE EXCEPTION 'forced outbox failure';
+             END IF;
+             RETURN NEW;
+         END;
+         $$",
+        retry_paper_id
+    );
+    sqlx::query(&failure_function).execute(&pool).await?;
+    sqlx::query(
+        "CREATE TRIGGER research_outbox_test_force_failure_trg
+         BEFORE INSERT ON outbox_events
+         FOR EACH ROW EXECUTE FUNCTION research_outbox_test_force_failure()",
+    )
+    .execute(&pool)
+    .await?;
+
+    let (failed_first, failed_second) = tokio::join!(
+        repository.publish_paper(retry_paper_id),
+        repository.publish_paper(retry_paper_id),
+    );
+    assert!(failed_first.is_err());
+    assert!(failed_second.is_err());
+    let rolled_back_outbox_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outbox_events
+         WHERE payload ->> 'paper_id' = $1",
+    )
+    .bind(retry_paper_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(rolled_back_outbox_count, 0);
+    let rolled_back_status: String =
+        sqlx::query_scalar("SELECT status FROM research_papers WHERE id = $1")
+            .bind(retry_paper_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(rolled_back_status, "approved");
+
+    sqlx::query("DROP TRIGGER research_outbox_test_force_failure_trg ON outbox_events")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DROP FUNCTION research_outbox_test_force_failure()")
+        .execute(&pool)
+        .await?;
+    let (retry_first, retry_second) = tokio::join!(
+        repository.publish_paper(retry_paper_id),
+        repository.publish_paper(retry_paper_id),
+    );
+    let retried = [retry_first?, retry_second?]
+        .into_iter()
+        .filter(Option::is_some)
+        .count();
+    assert_eq!(retried, 1, "concurrent retries may publish only once");
+
+    let retried_outbox_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outbox_events
+         WHERE payload ->> 'paper_id' = $1",
+    )
+    .bind(retry_paper_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(retried_outbox_count, 1);
 
     database.cleanup().await?;
     Ok(())
