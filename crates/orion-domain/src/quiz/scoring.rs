@@ -2,7 +2,14 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 pub use super::elo::{
+    clamp_player_elo, clamp_question_elo, compute_elo, compute_elo_with_source, expected_score,
+    EloResult, EloSourceMetadata, EloSourceMetadataError, BASIC_ELO_K, ELO_POLICY_VERSION,
+    PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,
+};
+#[cfg(not(test))]
+pub use crate::elo::{
     clamp_player_elo, clamp_question_elo, compute_elo, compute_elo_with_source, expected_score,
     EloResult, EloSourceMetadata, EloSourceMetadataError, BASIC_ELO_K, ELO_POLICY_VERSION,
     PLAYER_ELO_MAX, PLAYER_ELO_MIN, QUESTION_ELO_MAX, QUESTION_ELO_MIN,

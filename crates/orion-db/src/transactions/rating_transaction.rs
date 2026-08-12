@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use orion_domain::value_objects::elo::{compute_elo_with_source, EloSourceMetadata, BASIC_ELO_K};
+use orion_domain::elo::{compute_elo_with_source, EloSourceMetadata, BASIC_ELO_K};
 use sqlx::{Postgres, Result, Transaction};
 use uuid::Uuid;
 
@@ -323,7 +323,7 @@ pub(crate) async fn events_for_attempt(
 
 #[cfg(test)]
 mod tests {
-    use orion_domain::value_objects::elo::{compute_elo, expected_score};
+    use orion_domain::elo::{compute_elo, expected_score};
 
     use super::BASIC_K_FACTOR;
 

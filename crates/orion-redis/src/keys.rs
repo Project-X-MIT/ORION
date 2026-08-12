@@ -119,7 +119,7 @@ pub const REDIS_KEY_REGISTRY: &[RedisKeySpec] = &[
         "cache.research",
         "orion:v1:cache:research:{research_id}",
         Cache,
-        "shivanshrawat13aug2007-commits",
+        "divi912",
         RedisTtl::Seconds(300),
         "Delete after publication changes; drafts are never cached here."
     ),

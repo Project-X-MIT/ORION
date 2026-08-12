@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use fred::{
-    interfaces::KeysInterface,
+    interfaces::{KeysInterface, LuaInterface},
     prelude::{Client, ClientLike, Config, Error as FredError, PerformanceConfig},
 };
 use thiserror::Error;
@@ -92,6 +92,33 @@ impl RedisClient {
         Ok(())
     }
 
+    /// Deletes a key only when its value still equals the expected payload.
+    /// The comparison and deletion execute atomically inside Redis so a stale
+    /// cache invalidation cannot remove a newer fill between two commands.
+    pub async fn delete_if_value(
+        &self,
+        key: impl Into<fred::types::Key>,
+        expected_value: impl Into<fred::types::Value>,
+    ) -> Result<bool, RedisClientError> {
+        const DELETE_IF_VALUE_SCRIPT: &str = r#"
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+        "#;
+
+        let deleted: i64 = self
+            .inner
+            .eval(
+                DELETE_IF_VALUE_SCRIPT,
+                vec![key.into()],
+                vec![expected_value.into()],
+            )
+            .await
+            .map_err(RedisClientError::Command)?;
+        Ok(deleted == 1)
+    }
+
     pub async fn increment(
         &self,
         key: impl Into<fred::types::Key>,
@@ -119,5 +146,19 @@ impl RedisClient {
 
     pub async fn close(&self) -> Result<(), RedisClientError> {
         self.inner.quit().await.map_err(RedisClientError::Command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{RedisClient, RedisClientError};
+
+    #[tokio::test]
+    async fn unavailable_redis_is_reported_as_a_connection_error() {
+        let result = RedisClient::connect("redis://127.0.0.1:0", Duration::from_millis(100)).await;
+
+        assert!(matches!(result, Err(RedisClientError::Connection(_))));
     }
 }

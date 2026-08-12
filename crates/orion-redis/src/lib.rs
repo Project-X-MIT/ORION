@@ -2,6 +2,7 @@
 //!
 //! PostgreSQL remains authoritative for every business record.
 
+pub mod cache;
 pub mod client;
 pub mod keys;
 pub mod sessions;

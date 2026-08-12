@@ -3,6 +3,11 @@
 - Status: Accepted
 - Date: 2026-08-11
 - Owners: Research/Phantom feature owner; Quiz/Elo feature owner; Div for the shared event registry
+- Dependencies: DIV-06, DIV-08, and PHANTOM-03
+
+This handoff is integration-gated on DIV-06, DIV-08, and PHANTOM-03. Those
+issues must be available before this change is treated as independently
+mergeable; this document intentionally does not redefine their contracts.
 
 ## Context
 
@@ -77,7 +82,9 @@ calculation output.
 3. The Elo consumer validates the contract and claims the event before applying
    any effect.
 4. Redelivery with the same event or idempotency key returns the existing
-   settlement and must not create a second ledger entry or award.
+   settlement and must not create a second ledger entry or award. Phantom's
+   worker only creates/claims the single handoff request; Yash's consumer owns
+   the award transaction and its ledger dedupe check.
 5. A failed settlement leaves the event retryable and leaves current ratings,
    audit history, and the research award marker unchanged.
 

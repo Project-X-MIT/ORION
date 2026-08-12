@@ -30,3 +30,15 @@ Its `(consumer_key, event_id)` primary key makes redelivery idempotent, while
 the stored event type and schema version reject event-id collisions. Existing
 feature tables are unchanged; rollback is forward-only and leaves consumed
 event history intact.
+
+Migration `202608120001_outbox_job_metadata.sql` adds the worker-owned
+execution lifecycle beside the existing outbox transport status. The job
+status, attempts, retry schedule, and dead-letter context are indexed for
+operational polling; existing outbox rows remain transport-compatible.
+
+Migration `202608120002_research_content_immutability.sql` adds the database
+guard for research title, abstract, and content after submission. It protects
+the evaluated/publication version from direct SQL writers, including changes
+that would otherwise leave `published_at` unchanged and bypass cache version
+checks. Rollback is forward-only; the trigger is removed only by a compensating
+migration after an explicit policy decision.

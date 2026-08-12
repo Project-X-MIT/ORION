@@ -1,7 +1,10 @@
 use std::{env, error::Error};
 
 use orion_db::{models::ResearchPaperStatus, pool as db_pool, repositories::ResearchRepository};
-use orion_worker::jobs::research_review::process_research_award;
+use orion_worker::jobs::research_review::{
+    claim_research_review_job, fail_research_review_job, process_research_award,
+    ResearchReviewJobState,
+};
 use serde_json::json;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -188,6 +191,13 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
         .update_draft(draft.id, reviewer_id, "wrong owner", "", "content")
         .await?
         .is_none());
+    let submitted_content_mutation = sqlx::query(
+        "UPDATE research_papers SET content = 'must not change after submission' WHERE id = $1",
+    )
+    .bind(draft.id)
+    .execute(&pool)
+    .await;
+    assert!(submitted_content_mutation.is_err());
     assert!(repository
         .find_draft_by_id(draft.id, reviewer_id)
         .await?
@@ -796,10 +806,11 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
     .bind(reviewer_id)
     .fetch_one(&pool)
     .await?;
-    let event: (String, serde_json::Value, String) = sqlx::query_as(
-        "SELECT event_type, payload, status
+    let event: (Uuid, String, serde_json::Value, String) = sqlx::query_as(
+        "SELECT id, event_type, payload, status
          FROM outbox_events
-         WHERE payload ->> 'paper_id' = $1",
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
     )
     .bind(paper_id.to_string())
     .fetch_one(&pool)
@@ -817,19 +828,45 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
         request_count, 1,
         "100 award attempts must produce one request"
     );
-    assert_eq!(event.0, "orion.research.elo_award.requested");
-    assert_eq!(event.1["contract_version"], 1);
-    assert_eq!(event.1["author_id"], json!(author_id));
-    assert_eq!(event.1["review_id"], json!(review_id));
-    assert_eq!(event.1["paper_status"], "published");
-    assert_eq!(event.1["recommendation"], "approve");
-    assert_eq!(event.1["evaluation_score"], 90);
-    assert_eq!(event.1["evaluated_content_version"], 1);
+    assert_eq!(event.1, "orion.research.elo_award.requested");
+    assert_eq!(event.2["contract_version"], 1);
+    assert_eq!(event.2["author_id"], json!(author_id));
+    assert_eq!(event.2["review_id"], json!(review_id));
+    assert_eq!(event.2["paper_status"], "published");
+    assert_eq!(event.2["recommendation"], "approve");
+    assert_eq!(event.2["evaluation_score"], 90);
+    assert_eq!(event.2["evaluated_content_version"], 1);
     assert_eq!(
-        event.1["idempotency_key"],
+        event.2["idempotency_key"],
         format!("research-paper:{paper_id}:review:{review_id}:elo-award")
     );
-    assert_eq!(event.2, "pending");
+    assert_eq!(event.3, "pending");
+
+    // Duplicate delivery must not claim a second attempt or re-run the job
+    // after the first delivery has completed it.
+    assert!(!process_research_award(&pool, paper_id).await?);
+    let review_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM research_reviews
+         WHERE paper_id = $1 AND reviewer_id = $2",
+    )
+    .bind(paper_id)
+    .bind(reviewer_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        review_count, 1,
+        "repeated award delivery must not create a second review effect"
+    );
+    let job_state: (String, i32) = sqlx::query_as(
+        "SELECT job_status, job_attempts
+         FROM outbox_events
+         WHERE id = $1",
+    )
+    .bind(event.0)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(job_state, ("completed".to_owned(), 1));
 
     let ledger_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM rating_ledger
@@ -908,6 +945,56 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
     .fetch_one(&pool)
     .await?;
     assert_eq!(retried_outbox_count, 1);
+
+    let dead_letter_paper =
+        approved_research_paper(&repository, author_id, reviewer_id, "Dead-lettered award").await?;
+    repository
+        .publish_paper(dead_letter_paper)
+        .await?
+        .expect("dead-letter test paper should publish");
+    let dead_letter_event: Uuid = sqlx::query_scalar(
+        "SELECT id
+         FROM outbox_events
+         WHERE event_type = 'orion.research.elo_award.requested'
+           AND payload ->> 'paper_id' = $1",
+    )
+    .bind(dead_letter_paper.to_string())
+    .fetch_one(&pool)
+    .await?;
+    for attempt in 1..=3 {
+        let claimed = claim_research_review_job(&pool, dead_letter_event)
+            .await?
+            .expect("queued retry should be claimable");
+        assert_eq!(claimed.attempts, attempt);
+        let failed = fail_research_review_job(
+            &pool,
+            dead_letter_event,
+            "database error: private report and reviewer comments",
+        )
+        .await?
+        .expect("failed attempt should update durable job metadata");
+        if attempt < 3 {
+            assert_eq!(failed.state, ResearchReviewJobState::Retry);
+            sqlx::query(
+                "UPDATE outbox_events
+                 SET job_next_retry_at = CURRENT_TIMESTAMP
+                 WHERE id = $1",
+            )
+            .bind(dead_letter_event)
+            .execute(&pool)
+            .await?;
+        } else {
+            assert_eq!(failed.state, ResearchReviewJobState::DeadLetter);
+            assert_eq!(
+                failed.last_error.as_deref(),
+                Some("database_persistence_failed")
+            );
+            assert_eq!(
+                failed.dead_letter_reason.as_deref(),
+                Some("retry_budget_exhausted_after_3_attempts:database_persistence_failed")
+            );
+        }
+    }
 
     database.cleanup().await?;
     Ok(())
