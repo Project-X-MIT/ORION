@@ -34,6 +34,9 @@ event history intact.
 Migration `202608130004_research_published_immutability.sql` is owned by the
 research feature and adds a database trigger preventing edits to published
 paper content. Drafts remain editable, and existing research rows are
-compatible. Rollback is forward-only: deploy a compensating application
-release rather than removing the guard from a database that has recorded this
-migration.
+compatible. It adds no indexes because the guard only evaluates the row being
+updated. The compatibility window is the normal rolling deployment window:
+old readers remain compatible, while writers must be upgraded before the
+trigger is enabled. Rollback is forward-only: deploy a compensating
+application release rather than removing the guard from a database that has
+recorded this migration.

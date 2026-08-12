@@ -71,7 +71,7 @@ The success envelope's `data` contains:
       "rank_movement": 2
     }
   ],
-  "next_cursor": "v1.eyJyYXRpbmciOjI0MDAsInVzZXJfaWQiOiIuLi4ifQ",
+      "next_cursor": "eyJ2ZXJzaW9uIjoxLCJuZXh0X29mZnNldCI6MjB9",
   "as_of": "2026-08-11T08:30:00Z"
 }
 ```
