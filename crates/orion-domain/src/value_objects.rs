@@ -5,11 +5,10 @@ use uuid::Uuid;
 
 use crate::ContractError;
 
-// This re-export keeps the shared Elo policy available to persistence and
-// worker crates without placing any calculation in those crates. The formula
-// itself remains exclusively in `src/elo.rs`.
-#[path = "elo.rs"]
-pub mod elo;
+// Compatibility re-export for consumers that adopted the initial YASH-03
+// module path. The policy itself is owned by the single top-level domain
+// module in `src/elo.rs`.
+pub use crate::elo;
 
 macro_rules! uuid_id {
     ($name:ident) => {

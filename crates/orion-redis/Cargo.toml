@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-fred.workspace = true
+fred = { workspace = true, features = ["i-scripts"] }
 orion-common.workspace = true
 orion-domain.workspace = true
 serde.workspace = true

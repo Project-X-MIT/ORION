@@ -22,6 +22,24 @@ Author-only responses and authenticated detail reads include
 `Cache-Control: private, no-store`; private drafts are not eligible for shared
 HTTP caching.
 
+Public research responses are also `Cache-Control: no-store`. The controlled
+server-side Redis cache is the only public-read acceleration layer, because a
+withdrawal cannot reliably purge browser or intermediary HTTP caches.
+
+The research Redis cache is an acceleration layer for anonymous published
+reads only. PostgreSQL remains authoritative for drafts, review records and
+decisions, and Elo award state. Redis cache contents must never be used to
+authorize a lifecycle transition, complete a review, or settle an award.
+Redis read, invalidation, and cache-fill failures are non-fatal for public
+research reads: the route logs the operational failure and falls back to
+PostgreSQL.
+
+The research review worker does not reimplement research rules or open a
+business transaction. `orion-db` owns publication/review eligibility,
+persisted-evaluation validation, award-request idempotency, and the durable
+outbox insert. The worker invokes that operation and owns only delivery
+claims, bounded retries, dead-letter metadata, tracing, and metrics.
+
 ## Author lifecycle
 
 ### Create a draft

@@ -10,7 +10,7 @@ pub mod basic;
 #[path = "../elo.rs"]
 pub mod elo;
 #[cfg(not(test))]
-pub use crate::value_objects::elo;
+pub use crate::elo;
 pub mod scoring;
 pub mod validation;
 
