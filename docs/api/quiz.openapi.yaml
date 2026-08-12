@@ -1,0 +1,605 @@
+openapi: 3.1.0
+info:
+  title: ORION Quiz API
+  version: 1.0.0
+  description: Authenticated Basic and Advanced quiz retrieval, submission, and result access.
+
+paths:
+  /api/v1/quiz/basic:
+    get:
+      operationId: quiz.basic.get
+      summary: Retrieve Basic Quiz questions
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Active Basic Quiz questions without answer keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionPageSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/quiz/basic/attempts:
+    post:
+      operationId: quiz.basic.submit
+      summary: Submit Basic Quiz answers
+      description: Score and rating values are derived server-side from the submitted options and authoritative database state.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BasicSubmitRequest'
+      responses:
+        '200':
+          description: Settled Basic Quiz attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BasicSubmissionSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/quiz/advanced:
+    get:
+      operationId: quiz.advanced.get
+      summary: Retrieve Advanced Quiz questions
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Active Advanced Quiz questions without answer keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionPageSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/quiz/advanced/attempts:
+    post:
+      operationId: quiz.advanced.submit
+      summary: Submit Advanced Quiz predictions
+      description: Score and rating values are derived server-side from the submitted options and authoritative database state.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdvancedSubmitRequest'
+      responses:
+        '200':
+          description: Settled Advanced Quiz attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvancedSubmissionSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/quiz/attempts/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/AttemptId'
+    get:
+      operationId: quiz.attempt.get
+      summary: Retrieve an owned completed quiz result
+      description: Only the authenticated owner can retrieve a completed result. Missing, foreign, and pending attempts are intentionally indistinguishable.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Completed Basic or Advanced quiz result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptResultSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: orion_session
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+    AttemptId:
+      name: attempt_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    BasicSubmitRequest:
+      type: object
+      required: [attempt_id, answers]
+      additionalProperties: false
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/BasicAnswerRequest'
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        score:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        outcome:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        delta:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        rating:
+          $ref: '#/components/schemas/IgnoredClientValue'
+
+    BasicAnswerRequest:
+      type: object
+      required: [question_id]
+      additionalProperties: false
+      properties:
+        question_id:
+          type: string
+          format: uuid
+        option_id:
+          type: string
+          format: uuid
+        selected_option_id:
+          type: string
+          format: uuid
+          description: Compatibility alias for option_id; send one of the two fields.
+        score:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        outcome:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        delta:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        rating:
+          $ref: '#/components/schemas/IgnoredClientValue'
+      oneOf:
+        - required: [option_id]
+        - required: [selected_option_id]
+
+    AdvancedSubmitRequest:
+      type: object
+      required: [attempt_id]
+      additionalProperties: false
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        predictions:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AdvancedPredictionRequest'
+        answers:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Compatibility alias for predictions; send one of the two fields.
+          items:
+            $ref: '#/components/schemas/AdvancedPredictionRequest'
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+        score:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        outcome:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        delta:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        rating:
+          $ref: '#/components/schemas/IgnoredClientValue'
+      oneOf:
+        - required: [predictions]
+        - required: [answers]
+
+    AdvancedPredictionRequest:
+      type: object
+      required: [question_id]
+      additionalProperties: false
+      properties:
+        question_id:
+          type: string
+          format: uuid
+        option_id:
+          type: string
+          format: uuid
+        selected_option_id:
+          type: string
+          format: uuid
+          description: Compatibility alias for option_id; send one of the two fields.
+        score:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        outcome:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        delta:
+          $ref: '#/components/schemas/IgnoredClientValue'
+        rating:
+          $ref: '#/components/schemas/IgnoredClientValue'
+      oneOf:
+        - required: [option_id]
+        - required: [selected_option_id]
+
+    IgnoredClientValue:
+      description: Accepted for compatibility but ignored; never used for scoring or rating.
+
+    QuestionPage:
+      type: object
+      required: [items, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuizQuestion'
+        limit:
+          type: integer
+          format: int32
+        offset:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+
+    QuizQuestion:
+      type: object
+      required: [id, category, question_text, options]
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          type: string
+        question_text:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuizOption'
+
+    QuizOption:
+      type: object
+      required: [id, option_text, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        option_text:
+          type: string
+        position:
+          type: integer
+          format: int32
+
+    BasicAttempt:
+      type: object
+      required: [id, status, total_questions, correct_answers, score, rating_before, rating_after, started_at, completed_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [completed]
+        total_questions:
+          type: integer
+          format: int32
+        correct_answers:
+          type: integer
+          format: int32
+        score:
+          type: integer
+          format: int32
+        rating_before:
+          type: integer
+          format: int32
+        rating_after:
+          type: integer
+          format: int32
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, 'null']
+          format: date-time
+
+    ResultAttempt:
+      allOf:
+        - $ref: '#/components/schemas/BasicAttempt'
+        - type: object
+          required: [quiz_type]
+          properties:
+            quiz_type:
+              type: string
+              enum: [basic, advanced]
+
+    Rating:
+      type: object
+      required: [rating, games_played, wins, losses, draws]
+      properties:
+        rating:
+          type: integer
+          format: int32
+        games_played:
+          type: integer
+          format: int32
+        wins:
+          type: integer
+          format: int32
+        losses:
+          type: integer
+          format: int32
+        draws:
+          type: integer
+          format: int32
+
+    AnswerResult:
+      type: object
+      required: [question_id, correct, rating_delta]
+      properties:
+        question_id:
+          type: string
+          format: uuid
+        correct:
+          type: boolean
+        rating_delta:
+          type: integer
+          format: int32
+
+    BasicSubmission:
+      type: object
+      required: [attempt, rating, answers]
+      properties:
+        attempt:
+          $ref: '#/components/schemas/BasicAttempt'
+        rating:
+          $ref: '#/components/schemas/Rating'
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnswerResult'
+
+    AdvancedSubmission:
+      type: object
+      required: [attempt, rating, predictions]
+      properties:
+        attempt:
+          $ref: '#/components/schemas/BasicAttempt'
+        rating:
+          $ref: '#/components/schemas/Rating'
+        predictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnswerResult'
+
+    AttemptResult:
+      type: object
+      required: [attempt, rating]
+      properties:
+        attempt:
+          $ref: '#/components/schemas/ResultAttempt'
+        rating:
+          $ref: '#/components/schemas/Rating'
+        answers:
+          type: array
+          description: Present for Basic attempts only.
+          items:
+            $ref: '#/components/schemas/AnswerResult'
+        predictions:
+          type: array
+          description: Present for Advanced attempts only.
+          items:
+            $ref: '#/components/schemas/AnswerResult'
+
+    QuestionPageSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/QuestionPage'
+
+    BasicSubmissionSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BasicSubmission'
+
+    AdvancedSubmissionSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AdvancedSubmission'
+
+    AttemptResultSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AttemptResult'
+
+    ApiSuccess:
+      type: object
+      required: [api_version, request_id, data]
+      properties:
+        api_version:
+          type: integer
+          enum: [1]
+        request_id:
+          type: string
+          format: uuid
+        data: {}
+
+    ApiFailure:
+      type: object
+      required: [api_version, request_id, error]
+      properties:
+        api_version:
+          type: integer
+          enum: [1]
+        request_id:
+          type: string
+          format: uuid
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_REQUEST, VALIDATION_FAILED, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT, RATE_LIMITED, SERVICE_UNAVAILABLE, INTERNAL]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties:
+            type: string
+
+  responses:
+    InvalidRequest:
+      description: Invalid request or malformed UUID/query parameters.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    Unauthenticated:
+      description: Authentication is required or the session is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    ValidationFailed:
+      description: Request or database-backed quiz validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    NotFound:
+      description: The attempt is missing, foreign to the caller, or still pending.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    PayloadTooLarge:
+      description: Request body exceeds the 1 MiB policy limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    UnsupportedMediaType:
+      description: Quiz submissions must use application/json.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    Internal:
+      description: Unexpected internal failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
+    ServiceUnavailable:
+      description: A required database service is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiFailure'
