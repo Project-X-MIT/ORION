@@ -596,7 +596,10 @@ async fn research_lifecycle_acceptance_criteria() -> Result<(), Box<dyn Error>> 
     .await?;
     assert_eq!(ledger_entry.0, "research_review");
     assert_eq!(ledger_entry.1, draft.id);
-    assert_eq!(ledger_entry.2, "user");
+    assert_eq!(
+        ledger_entry.2,
+        format!("research-paper:{}:elo-award", draft.id)
+    );
     assert_eq!(ledger_entry.3, 1000);
     assert_eq!(ledger_entry.4, 1025);
     assert_eq!(ledger_entry.5, 25);
@@ -904,7 +907,7 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
         "SELECT COUNT(*) FROM outbox_events
          WHERE payload ->> 'paper_id' = $1",
     )
-    .bind(retry_paper_id)
+    .bind(retry_paper_id.to_string())
     .fetch_one(&pool)
     .await?;
     assert_eq!(rolled_back_outbox_count, 0);
@@ -935,7 +938,7 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
         "SELECT COUNT(*) FROM outbox_events
          WHERE payload ->> 'paper_id' = $1",
     )
-    .bind(retry_paper_id)
+    .bind(retry_paper_id.to_string())
     .fetch_one(&pool)
     .await?;
     assert_eq!(retried_outbox_count, 1);
