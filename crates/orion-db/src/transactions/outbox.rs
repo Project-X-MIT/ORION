@@ -23,4 +23,17 @@ pub async fn write_outbox_event(
     .await
 }
 
+pub async fn write_outbox_event_with_context(
+    transaction: &mut Transaction<'_, Postgres>,
+    event_type: &str,
+    schema_version: i32,
+    payload: impl Serialize,
+    request_id: Option<Uuid>,
+    trace_id: Option<&str>,
+) -> sqlx::Result<Uuid> {
+    sqlx::query_scalar("INSERT INTO outbox_events (event_type, schema_version, payload, request_id, trace_id) VALUES ($1,$2,$3,$4,$5) RETURNING id")
+        .bind(event_type).bind(schema_version).bind(sqlx::types::Json(payload)).bind(request_id).bind(trace_id)
+        .fetch_one(&mut **transaction).await
+}
+
 // TODO: Add the polling worker or LISTEN/NOTIFY dispatcher in a later phase.

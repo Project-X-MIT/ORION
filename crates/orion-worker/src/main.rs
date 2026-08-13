@@ -8,6 +8,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use orion_worker::{
+    jobs::outbox_dispatch,
     jobs::research_review::{
         claim_research_review_job, fail_research_review_job, process_research_award,
     },
@@ -99,6 +100,7 @@ async fn run(pool: PgPool, config: &WorkerConfig) {
 }
 
 async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<()> {
+    let _ = outbox_dispatch::dispatch_once(pool, MAX_PENDING_JOBS_PER_POLL).await?;
     for job in scheduler::WORKER_JOB_REGISTRY {
         match job.id {
             RESEARCH_REVIEW_JOB_ID => {

@@ -7,3 +7,4 @@ pub mod transactions;
 
 pub use error::DatabaseError;
 pub use transactions::write_outbox_event;
+pub use transactions::write_outbox_event_with_context;

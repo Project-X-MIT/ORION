@@ -11,7 +11,7 @@ pub use notification::{
     create_notification, list_notifications, mark_notification_read, mark_notification_unread,
     unread_notification_count,
 };
-pub use outbox::write_outbox_event;
+pub use outbox::{write_outbox_event, write_outbox_event_with_context};
 
 pub use advanced_settlement::{settle_advanced_attempt, settle_advanced_quiz};
 pub use basic_settlement::{settle_basic_attempt, settle_basic_quiz};

@@ -2,6 +2,7 @@ pub mod leaderboard;
 pub mod learning;
 pub mod news;
 pub mod notification;
+pub mod outbox;
 pub mod profile;
 pub mod quiz_attempt;
 pub mod quiz_question;
@@ -15,6 +16,7 @@ pub use learning::{
 };
 pub use news::{NewsArticle, NewsIngestionRun, NewsSource};
 pub use notification::{NewNotification, Notification};
+pub use outbox::{OutboxEvent, OutboxJobStatus};
 pub use profile::{Profile, ProfileStatistics};
 pub use quiz_attempt::{
     AdvancedSettlementInput, BasicSettlementInput, NewQuizAttempt, QuizAnswer, QuizAttempt,
