@@ -111,6 +111,6 @@ jobs:
           }
           trap cleanup EXIT
           "${compose[@]}" up --build --detach
-          curl --fail --retry 30 --retry-delay 2 http://127.0.0.1:5173/health/live
+          curl --fail --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:5173/health/live
           "${compose[@]}" ps
           "${compose[@]}" stop api worker frontend
