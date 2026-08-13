@@ -165,6 +165,7 @@ pub fn redis_key(id: &str) -> Option<&'static RedisKeySpec> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RedisKey {
     Session { session_id: Uuid },
+    LoginRateLimit { subject_hash: String },
     AdvancedSettlementLock { attempt_id: Uuid },
     WorkerJobLock { job_name: String },
     QuizQuestion { question_id: Uuid },
@@ -181,6 +182,10 @@ impl fmt::Display for RedisKey {
             Self::Session { session_id } => {
                 write!(formatter, "{ROOT_NAMESPACE}:session:{session_id}")
             }
+            Self::LoginRateLimit { subject_hash } => write!(
+                formatter,
+                "{ROOT_NAMESPACE}:rate_limit:login:{subject_hash}"
+            ),
             Self::AdvancedSettlementLock { attempt_id } => write!(
                 formatter,
                 "{ROOT_NAMESPACE}:lock:advanced_settlement:{attempt_id}"
@@ -215,5 +220,64 @@ impl fmt::Display for RedisKey {
                 "{ROOT_NAMESPACE}:cache:learning_course:{course_id}"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{RedisKey, REDIS_KEY_REGISTRY, ROOT_NAMESPACE};
+    use uuid::Uuid;
+
+    #[test]
+    fn registered_patterns_are_unique_and_namespaced() {
+        let mut ids = HashSet::new();
+        let mut patterns = HashSet::new();
+        for spec in REDIS_KEY_REGISTRY {
+            assert!(ids.insert(spec.id), "duplicate registry id: {}", spec.id);
+            assert!(
+                patterns.insert(spec.pattern),
+                "duplicate pattern: {}",
+                spec.pattern
+            );
+            assert!(spec.pattern.starts_with(&format!("{ROOT_NAMESPACE}:")));
+            assert!(spec.pattern.contains(spec.namespace.as_str()));
+        }
+    }
+
+    #[test]
+    fn dynamic_values_cannot_collide_across_registered_prefixes() {
+        let id = Uuid::nil();
+        let keys = [
+            RedisKey::Session { session_id: id }.to_string(),
+            RedisKey::LoginRateLimit {
+                subject_hash: id.to_string(),
+            }
+            .to_string(),
+            RedisKey::AdvancedSettlementLock { attempt_id: id }.to_string(),
+            RedisKey::WorkerJobLock {
+                job_name: id.to_string(),
+            }
+            .to_string(),
+            RedisKey::QuizQuestion { question_id: id }.to_string(),
+            RedisKey::Leaderboard {
+                limit: 0,
+                offset: 0,
+            }
+            .to_string(),
+            RedisKey::Profile {
+                user_id: orion_domain::UserId::from_uuid(id),
+            }
+            .to_string(),
+            RedisKey::Research { research_id: id }.to_string(),
+            RedisKey::NewsFeed {
+                limit: 0,
+                offset: 0,
+            }
+            .to_string(),
+            RedisKey::LearningCourse { course_id: id }.to_string(),
+        ];
+        assert_eq!(keys.iter().collect::<HashSet<_>>().len(), keys.len());
     }
 }

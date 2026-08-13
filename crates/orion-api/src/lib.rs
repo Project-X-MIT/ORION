@@ -3,7 +3,7 @@
 //! Feature owners expose isolated routers; application assembly remains here.
 
 use axum::{
-    http::{HeaderMap, Request},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     Router,
 };
@@ -17,6 +17,7 @@ pub mod config;
 pub mod middleware;
 pub mod routes;
 pub mod state;
+pub mod websocket;
 
 #[derive(Debug, Clone)]
 pub struct ApiProblem {
@@ -123,55 +124,49 @@ pub fn success<T: Serialize>(headers: &HeaderMap, data: T) -> axum::Json<ApiSucc
 }
 
 pub fn app(state: state::AppState) -> Router {
-    use axum::http::StatusCode;
+    use axum::http::{header, HeaderValue, StatusCode};
     use tower::ServiceBuilder;
     use tower_http::{
-        cors::{AllowOrigin, Any, CorsLayer},
         request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+        set_header::SetResponseHeaderLayer,
         timeout::TimeoutLayer,
         trace::TraceLayer,
     };
 
-    let origins = state
-        .config
-        .cors_origins
-        .iter()
-        .filter_map(|origin| origin.parse().ok())
-        .collect::<Vec<_>>();
-    let cors = if origins.is_empty() {
-        CorsLayer::new()
-    } else {
-        CorsLayer::new().allow_origin(AllowOrigin::list(origins))
-    }
-    .allow_methods(Any)
-    .allow_headers(Any)
-    .allow_credentials(true);
-
+    let cors = middleware::cors::layer(&state.config.cors_origins);
     Router::new()
         .merge(routes::router())
         .layer(
             ServiceBuilder::new()
                 .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
                 .layer(PropagateRequestIdLayer::x_request_id())
-                .layer(
-                    TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                        let request_id = request
-                            .headers()
-                            .get("x-request-id")
-                            .and_then(|value| value.to_str().ok())
-                            .and_then(|value| Uuid::parse_str(value).ok());
-                        tracing::info_span!(
-                            "http_request",
-                            method = %request.method(),
-                            request_id = ?request_id,
-                        )
-                    }),
-                )
+                .layer(TraceLayer::new_for_http().make_span_with(middleware::logging::span))
                 .layer(cors)
+                .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024))
                 .layer(TimeoutLayer::with_status_code(
                     StatusCode::REQUEST_TIMEOUT,
                     state.config.request_timeout,
                 )),
         )
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), geolocation=(), microphone=()"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
         .with_state(state)
 }

@@ -99,3 +99,7 @@ workspace = true
 [[test]]
 name = "research"
 path = "tests/integration/research.rs"
+
+[[test]]
+name = "leaderboard"
+path = "tests/integration/leaderboard.rs"

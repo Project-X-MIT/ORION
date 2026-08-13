@@ -186,6 +186,25 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
     let notification = create_notification(&database.pool, input)
         .await
         .expect("create notification transaction");
+    let other_user = users
+        .create(NewUser {
+            email: "other@example.com",
+            username: "other_contract_user",
+            password_hash: "$argon2id$test-only-hash",
+            display_name: None,
+        })
+        .await
+        .expect("create second user for IDOR coverage");
+    assert!(
+        mark_notification_read(&database.pool, other_user.id, notification.id)
+            .await
+            .expect("cross-user mark-read must be a safe lookup miss")
+            .is_none()
+    );
+    assert!(list_notifications(&database.pool, other_user.id, 20, 0)
+        .await
+        .expect("cross-user list must remain isolated")
+        .is_empty());
     let duplicate = notifications::create(&database.pool, input)
         .await
         .expect("deduplicate notification retry");

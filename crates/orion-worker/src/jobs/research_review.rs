@@ -653,7 +653,7 @@ fn retry_backoff_seconds(attempts: i32) -> i64 {
 /// is deliberately allowlisted and returns no caller-provided text.
 fn safe_failure_context(error: &str) -> String {
     let normalized = error.to_ascii_lowercase();
-    let context = if normalized.contains("timeout") {
+    let context = if normalized.contains("timeout") || normalized.contains("timed out") {
         "dependency_timeout"
     } else if normalized.contains("redis") {
         "redis_dependency_failed"

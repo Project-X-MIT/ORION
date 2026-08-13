@@ -109,3 +109,20 @@ pub async fn set_status(pool: &PgPool, user_id: Uuid, status: UserStatus) -> Res
         .fetch_optional(pool)
         .await
 }
+
+pub async fn anonymize(pool: &PgPool, user_id: Uuid) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let changed = sqlx::query(
+        "UPDATE users SET email = CONCAT('deleted+', id, '@invalid.local')::citext,
+            username = CONCAT('deleted-', id)::citext, password_hash = 'deleted',
+            display_name = NULL, bio = NULL, avatar_url = NULL, status = 'deleted',
+            disabled_at = COALESCE(disabled_at, CURRENT_TIMESTAMP), deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP)
+         WHERE id = $1 AND status <> 'deleted'",
+    ).bind(user_id).execute(&mut *tx).await?.rows_affected();
+    if changed == 1 {
+        sqlx::query("INSERT INTO audit_events (actor_user_id, action, target_type, target_id, metadata) VALUES (NULL, 'account.anonymized', 'user', $1, '{\"reason\":\"user_request\"}'::jsonb)")
+            .bind(user_id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(changed == 1)
+}
