@@ -27,7 +27,15 @@ pub struct RedisClient {
 impl RedisClient {
     pub async fn connect(url: &str, timeout: Duration) -> Result<Self, RedisClientError> {
         let config = Config::from_url(url).map_err(|_| RedisClientError::Configuration)?;
-        let client = Client::new(config, Some(PerformanceConfig::default()), None, None);
+        let performance = PerformanceConfig {
+            // Fred intentionally defaults command timeouts to zero (unbounded).
+            // Redis is disposable in ORION, so an unavailable cache must fail
+            // within the caller's configured deadline and allow PostgreSQL
+            // fallback rather than pinning the request forever.
+            default_command_timeout: timeout,
+            ..PerformanceConfig::default()
+        };
+        let client = Client::new(config, Some(performance), None, None);
         tokio::time::timeout(timeout, client.init())
             .await
             .map_err(|_| {
