@@ -17,6 +17,7 @@ pub mod config;
 pub mod middleware;
 pub mod routes;
 pub mod state;
+pub mod websocket;
 
 #[derive(Debug, Clone)]
 pub struct ApiProblem {

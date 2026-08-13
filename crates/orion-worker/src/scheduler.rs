@@ -14,17 +14,27 @@ pub struct WorkerJobSpec {
 }
 
 pub const RESEARCH_REVIEW_JOB_ID: &str = "research_review";
+pub const NOTIFICATION_JOB_ID: &str = "notification";
 
 // TODO(DIV-06, DIV-08): Reconcile this shared registration metadata with
 // Div's merged implementations after those issues land. Phantom's body stays
 // feature-owned; only the integration wiring should change at that point.
-pub const WORKER_JOB_REGISTRY: &[WorkerJobSpec] = &[WorkerJobSpec {
-    id: RESEARCH_REVIEW_JOB_ID,
-    registry_owner: "divi912",
-    body_owner: "shivanshrawat13aug2007-commits",
-    body_path: "orion_worker::jobs::research_review::process_research_award",
-    trigger: "orion.research.elo_award.requested",
-}];
+pub const WORKER_JOB_REGISTRY: &[WorkerJobSpec] = &[
+    WorkerJobSpec {
+        id: RESEARCH_REVIEW_JOB_ID,
+        registry_owner: "divi912",
+        body_owner: "shivanshrawat13aug2007-commits",
+        body_path: "orion_worker::jobs::research_review::process_research_award",
+        trigger: "orion.research.elo_award.requested",
+    },
+    WorkerJobSpec {
+        id: NOTIFICATION_JOB_ID,
+        registry_owner: "divi912",
+        body_owner: "divi912",
+        body_path: "orion_worker::jobs::notification::process_notification",
+        trigger: "orion.notification.requested",
+    },
+];
 
 #[must_use]
 pub fn worker_job(id: &str) -> Option<&'static WorkerJobSpec> {

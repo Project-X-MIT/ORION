@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use sqlx::FromRow;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, FromRow, Serialize)]
 pub struct Notification {
     pub id: Uuid,
     pub user_id: Uuid,
