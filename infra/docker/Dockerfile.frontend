@@ -12,7 +12,10 @@ FROM caddy:2.10.0-alpine
 
 COPY --from=builder /app/frontend/dist /srv
 COPY infra/caddy/Caddyfile /etc/caddy/Caddyfile
-RUN chown -R caddy:caddy /srv /etc/caddy /data /config
+RUN addgroup -S caddy \
+    && adduser -S -G caddy caddy \
+    && mkdir -p /data /config \
+    && chown -R caddy:caddy /srv /etc/caddy /data /config
 USER caddy
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
