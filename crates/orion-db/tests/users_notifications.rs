@@ -9,6 +9,9 @@ use orion_db::{
         create_notification, list_notifications, mark_notification_read, unread_notification_count,
     },
 };
+use orion_domain::{
+    EventEnvelope, EventId, NotificationId, NotificationKind, NotificationRequestedV1, UserId,
+};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
@@ -84,6 +87,7 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
     for table in [
         "users",
         "user_ratings",
+        "rating_ledger",
         "quiz_attempts",
         "leaderboard_rank_history",
         "research_papers",
@@ -118,6 +122,31 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
             .id,
         user.id
     );
+
+    let ledger_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO rating_ledger
+         (id, user_id, source_type, source_id, dedupe_key, rating_before, rating_after, rating_delta)
+         VALUES ($1, $2, 'test', $3, 'user', 1200, 1216, 16)",
+    )
+    .bind(ledger_id)
+    .bind(user.id)
+    .bind(Uuid::new_v4())
+    .execute(&database.pool)
+    .await
+    .expect("insert append-only rating ledger entry");
+    assert!(
+        sqlx::query("UPDATE rating_ledger SET rating_after = 1217 WHERE id = $1")
+            .bind(ledger_id)
+            .execute(&database.pool)
+            .await
+            .is_err()
+    );
+    assert!(sqlx::query("DELETE FROM rating_ledger WHERE id = $1")
+        .bind(ledger_id)
+        .execute(&database.pool)
+        .await
+        .is_err());
 
     let duplicate_email = users
         .create(NewUser {
@@ -190,6 +219,63 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
             .len(),
         1
     );
+
+    let event = EventEnvelope::new(
+        EventId::from_uuid(Uuid::new_v4()),
+        chrono::Utc::now(),
+        "orion-api",
+        NotificationRequestedV1 {
+            notification_id: NotificationId::from_uuid(Uuid::new_v4()),
+            recipient_id: UserId::from_uuid(user.id),
+            kind: NotificationKind::System,
+            title: "Event notification".to_owned(),
+            body: "Delivered once".to_owned(),
+            action_url: None,
+            deduplication_key: "event:notification-once".to_owned(),
+        },
+    );
+    let consumed = orion_db::transactions::consume_notification_requested(
+        &database.pool,
+        &event,
+        "notification-worker",
+    )
+    .await
+    .expect("consume versioned notification event")
+    .expect("first delivery applies effect");
+    assert_eq!(consumed.deduplication_key, "event:notification-once");
+    assert!(orion_db::transactions::consume_notification_requested(
+        &database.pool,
+        &event,
+        "notification-worker",
+    )
+    .await
+    .expect("redelivery is acknowledged")
+    .is_none());
+    assert!(sqlx::query(
+        "UPDATE event_consumptions SET event_type = 'tampered'\
+         WHERE consumer_key = 'notification-worker' AND event_id = $1",
+    )
+    .bind(event.event_id.into_uuid())
+    .execute(&database.pool)
+    .await
+    .is_err());
+    assert!(sqlx::query(
+        "DELETE FROM event_consumptions\
+         WHERE consumer_key = 'notification-worker' AND event_id = $1",
+    )
+    .bind(event.event_id.into_uuid())
+    .execute(&database.pool)
+    .await
+    .is_err());
+    let consumed_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_consumptions
+         WHERE consumer_key = 'notification-worker' AND event_id = $1",
+    )
+    .bind(event.event_id.into_uuid())
+    .fetch_one(&database.pool)
+    .await
+    .expect("count claimed event");
+    assert_eq!(consumed_count, 1);
 
     let seed = include_str!("../seeds/dev_users.sql");
     sqlx::raw_sql(seed)

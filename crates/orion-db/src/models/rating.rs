@@ -3,7 +3,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// The starting Elo assigned to users and questions that have no history.
-pub const DEFAULT_RATING: i32 = 1200;
+pub const DEFAULT_RATING: i32 = 500;
 
 /// The current rating and aggregate answer record for one user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromRow)]
@@ -54,6 +54,20 @@ pub struct RatingEvent {
     pub question_rating_after: i32,
     pub question_elo_before: i32,
     pub question_elo_after: i32,
+    pub rating_delta: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Append-only audit data for every user Elo change, including non-quiz awards.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct RatingLedgerEntry {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub source_type: String,
+    pub source_id: Uuid,
+    pub dedupe_key: String,
+    pub rating_before: i32,
+    pub rating_after: i32,
     pub rating_delta: i32,
     pub created_at: DateTime<Utc>,
 }

@@ -1,0 +1,34 @@
+{
+  "question": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "topic": "syntax",
+    "prompt": "Which option is correct?",
+    "options": [
+      {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "text": "Correct",
+        "is_correct": true
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "text": "Incorrect",
+        "is_correct": false
+      }
+    ],
+    "intended_seconds": 15
+  },
+  "cases": [
+    {
+      "name": "correct_answer",
+      "selected_option_id": "00000000-0000-0000-0000-000000000002",
+      "expected_correct": true,
+      "expected_score": 1
+    },
+    {
+      "name": "incorrect_answer",
+      "selected_option_id": "00000000-0000-0000-0000-000000000003",
+      "expected_correct": false,
+      "expected_score": 0
+    }
+  ]
+}

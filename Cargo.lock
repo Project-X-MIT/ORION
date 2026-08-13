@@ -1324,6 +1324,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "async-trait",
  "axum",
  "base64",
  "chrono",
@@ -1338,6 +1339,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror",
  "time",
  "tokio",
  "tower",
@@ -1366,6 +1368,9 @@ name = "orion-db"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "orion-domain",
+ "serde",
+ "serde_json",
  "sqlx",
  "thiserror",
  "tokio",

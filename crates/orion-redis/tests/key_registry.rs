@@ -19,7 +19,10 @@ fn redis_registry_is_unique_owned_and_documented() {
         assert!(!key.owner.is_empty());
         assert!(!key.invalidation_rule.is_empty());
         assert!(
-            docs.contains(&format!("`{}`", key.id)),
+            docs.contains(&format!(
+                "| `{}` | {} | `{}` |",
+                key.id, key.owner, key.pattern
+            )),
             "undocumented Redis key: {}",
             key.id
         );

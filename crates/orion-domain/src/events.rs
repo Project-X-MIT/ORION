@@ -77,6 +77,20 @@ impl<T: VersionedEvent> EventEnvelope<T> {
             payload,
         }
     }
+
+    /// Validates that an envelope still carries the contract implemented by
+    /// its typed payload. Public envelope fields allow deserializers to fill
+    /// the value, so consumers must perform this check before applying an
+    /// effect.
+    pub fn validate_contract(&self) -> Result<(), ContractError> {
+        if self.event_type != T::EVENT_TYPE || self.schema_version != T::SCHEMA_VERSION {
+            return Err(ContractError::UnsupportedEventVersion {
+                event_type: self.event_type.clone(),
+                version: self.schema_version,
+            });
+        }
+        ensure_event_compatible(&self.event_type, self.schema_version)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
