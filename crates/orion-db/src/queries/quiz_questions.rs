@@ -135,7 +135,26 @@ pub async fn basic_questions_with_options(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<QuizQuestionWithOptions>> {
-    let questions = basic_questions(pool, limit, offset).await?;
+    questions_with_options_by_type(pool, QuizType::Basic, limit, offset).await
+}
+
+/// Returns a paged set of active Advanced Quiz questions with their options
+/// and current question ratings.
+pub async fn advanced_questions_with_options(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<QuizQuestionWithOptions>> {
+    questions_with_options_by_type(pool, QuizType::Advanced, limit, offset).await
+}
+
+async fn questions_with_options_by_type(
+    pool: &PgPool,
+    quiz_type: QuizType,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<QuizQuestionWithOptions>> {
+    let questions = list_by_type(pool, quiz_type, limit, offset).await?;
     load_options_and_ratings(pool, questions).await
 }
 

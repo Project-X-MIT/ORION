@@ -40,3 +40,15 @@ old readers remain compatible, while writers must be upgraded before the
 trigger is enabled. Rollback is forward-only: deploy a compensating
 application release rather than removing the guard from a database that has
 recorded this migration.
+
+Migration `202608120001_outbox_job_metadata.sql` adds the worker-owned
+execution lifecycle beside the existing outbox transport status. The job
+status, attempts, retry schedule, and dead-letter context are indexed for
+operational polling; existing outbox rows remain transport-compatible.
+
+Migration `202608120002_research_content_immutability.sql` adds the database
+guard for research title, abstract, and content after submission. It protects
+the evaluated/publication version from direct SQL writers, including changes
+that would otherwise leave `published_at` unchanged and bypass cache version
+checks. Rollback is forward-only; the trigger is removed only by a compensating
+migration after an explicit policy decision.

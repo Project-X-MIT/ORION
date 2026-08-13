@@ -2,6 +2,7 @@
 //!
 //! This crate must not depend on HTTP, PostgreSQL, or Redis implementations.
 
+pub mod elo;
 pub mod entities;
 pub mod errors;
 pub mod events;

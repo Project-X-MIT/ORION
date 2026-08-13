@@ -2,7 +2,8 @@
 
 The Rust registries are authoritative; these documents explain their meaning
 and are checked by tests so an identifier cannot be added without an owner and
-documentation.
+documentation. Div registers shared Redis keys and worker jobs. Feature owners
+implement the module bodies referenced by those registrations.
 
 ## Lifecycle
 

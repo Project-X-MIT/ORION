@@ -27,11 +27,26 @@ player_new_elo = clamp(player_elo + point_delta)
 question_new_elo = clamp(question_elo - point_delta)
 ```
 
-Basic uses the fixed `K = 32` and `Sa` equal to `1` for a correct answer or
+Basic uses the fixed `K = 20` and `Sa` equal to `1` for a correct answer or
 `0` for an incorrect answer. Advanced derives `K` and `Sa` from its error
-percentage zone table. Neither mode uses a separate minimum/maximum marks
-range to determine rating movement. Any future user-visible points system
-must be a separately specified ledger and must not be confused with ELO `K`.
+percentage zone table:
+
+| Error | Zone | K | Sa | Effect |
+| ---: | --- | ---: | ---: | --- |
+| 0% | Win | 30 | 1 | Strong positive reward |
+| 1% | Win | 27.5 | 1 | Positive reward |
+| 2–3% | Win | 25 | 1 | Positive reward |
+| 4–5% | Win | 18.28 | 1 | Positive reward |
+| 6–8% | Win | 16.00 | 1 | Smaller positive reward |
+| 9–10% | Neutral | 0 | 0 | No rating movement |
+| 11–20% | Mild penalty | 15.00 | 0 | Small negative delta |
+| 21–30% | Mild penalty | 25.00 | 0 | Medium negative delta |
+| 31–50% | Mild penalty | 30.00 | 0 | Larger negative delta |
+| 51%+ | Severe penalty | 35.00 | 0 | Maximum negative delta |
+
+Neither mode uses a separate minimum/maximum marks range to determine rating
+movement. Any future user-visible points system must be a separately specified
+ledger and must not be confused with ELO `K`.
 
 ### Market calendar
 

@@ -5,6 +5,11 @@ use uuid::Uuid;
 
 use crate::ContractError;
 
+// Compatibility re-export for consumers that adopted the initial YASH-03
+// module path. The policy itself is owned by the single top-level domain
+// module in `src/elo.rs`.
+pub use crate::elo;
+
 macro_rules! uuid_id {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

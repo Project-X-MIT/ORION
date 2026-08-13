@@ -114,7 +114,7 @@ async fn create_schema_objects(admin: &PgPool, schema: &str) {
         format!(
             "CREATE TABLE {schema}.user_ratings (\
                 user_id UUID PRIMARY KEY REFERENCES {schema}.users(id),\
-                rating INTEGER NOT NULL DEFAULT 1200,\
+                rating INTEGER NOT NULL DEFAULT 500,\
                 games_played INTEGER NOT NULL DEFAULT 0,\
                 wins INTEGER NOT NULL DEFAULT 0,\
                 losses INTEGER NOT NULL DEFAULT 0,\
@@ -145,7 +145,7 @@ async fn create_schema_objects(admin: &PgPool, schema: &str) {
         format!(
             "CREATE TABLE {schema}.question_ratings (\
                 question_id UUID PRIMARY KEY REFERENCES {schema}.quiz_questions(id),\
-                rating INTEGER NOT NULL DEFAULT 1200,\
+                rating INTEGER NOT NULL DEFAULT 500,\
                 attempts INTEGER NOT NULL DEFAULT 0,\
                 correct_answers INTEGER NOT NULL DEFAULT 0,\
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\
@@ -272,7 +272,7 @@ async fn basic_attempt_can_be_created_then_settled() {
     };
     let pending = create_pending(
         &database.pool,
-        &NewQuizAttempt::new(database.user_id, QuizType::Basic, 1, 1200),
+        &NewQuizAttempt::new(database.user_id, QuizType::Basic, 1, 500),
     )
     .await
     .expect("create pending basic attempt");
@@ -308,14 +308,14 @@ async fn basic_attempt_can_be_created_then_settled() {
     assert!(event.correct);
     assert_eq!(event.zone, "basic");
     assert_eq!(event.error_pct, 0.0);
-    assert_eq!(event.k, 32);
+    assert_eq!(event.k, 20);
     assert_eq!(event.sa, 1.0);
-    assert_eq!(event.point_delta, 16);
-    assert_eq!(event.player_elo_before, 1200);
-    assert_eq!(event.player_elo_after, 1216);
-    assert_eq!(event.question_elo_before, 1200);
-    assert_eq!(event.question_elo_after, 1184);
-    assert_eq!(event.rating_delta, 16);
+    assert_eq!(event.point_delta, 10);
+    assert_eq!(event.player_elo_before, 500);
+    assert_eq!(event.player_elo_after, 510);
+    assert_eq!(event.question_elo_before, 500);
+    assert_eq!(event.question_elo_after, 490);
+    assert_eq!(event.rating_delta, 10);
 
     let user_rating = sqlx::query_as::<_, (i32, i32)>(
         "SELECT rating, games_played FROM user_ratings WHERE user_id = $1",
@@ -331,8 +331,8 @@ async fn basic_attempt_can_be_created_then_settled() {
     .fetch_one(&database.pool)
     .await
     .expect("read settled question rating");
-    assert_eq!(user_rating, (1216, 1));
-    assert_eq!(question_rating, (1184, 1));
+    assert_eq!(user_rating, (510, 1));
+    assert_eq!(question_rating, (490, 1));
 
     let completed = find_completed_by_id(&database.pool, pending.id, database.user_id)
         .await
@@ -375,7 +375,7 @@ async fn advanced_attempt_can_remain_pending_until_settlement() {
 
     let pending = create_pending(
         &database.pool,
-        &NewQuizAttempt::new(database.user_id, QuizType::Advanced, 1, 1200),
+        &NewQuizAttempt::new(database.user_id, QuizType::Advanced, 1, 500),
     )
     .await
     .expect("create pending advanced attempt");
@@ -472,13 +472,13 @@ async fn duplicate_concurrent_settlement_is_idempotent() {
     assert!(audit.2);
     assert_eq!(audit.3, "basic");
     assert_eq!(audit.4, 0.0);
-    assert_eq!(audit.5, 32);
+    assert_eq!(audit.5, 20);
     assert_eq!(audit.6, 1.0);
-    assert_eq!(audit.7, 16);
-    assert_eq!(audit.8, 1200);
-    assert_eq!(audit.9, 1216);
-    assert_eq!(audit.10, 1200);
-    assert_eq!(audit.11, 1184);
+    assert_eq!(audit.7, 10);
+    assert_eq!(audit.8, 500);
+    assert_eq!(audit.9, 510);
+    assert_eq!(audit.10, 500);
+    assert_eq!(audit.11, 490);
 
     database.cleanup().await;
 }
@@ -534,8 +534,8 @@ async fn same_attempt_cannot_settle_twice() {
     assert_eq!(event_count, 1);
     assert_eq!(games_played, 1);
     assert_eq!(question_attempts, 1);
-    assert_eq!(user_rating, 1216);
-    assert_eq!(question_rating, 1184);
+    assert_eq!(user_rating, 510);
+    assert_eq!(question_rating, 490);
 
     database.cleanup().await;
 }
@@ -634,7 +634,7 @@ async fn failed_settlement_rolls_back_attempt_ratings_and_audit() {
     assert_eq!(user_rating_rows, 0);
     assert_eq!(user_games, 0);
     assert_eq!(question_attempts, 0);
-    assert_eq!(question_rating, 1200);
+    assert_eq!(question_rating, 500);
     assert_eq!(events, 0);
 
     database.cleanup().await;
