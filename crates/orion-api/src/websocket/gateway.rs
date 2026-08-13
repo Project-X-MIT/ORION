@@ -32,6 +32,10 @@ impl NotificationGateway {
     fn subscribe(&self) -> broadcast::Receiver<NotificationEvent> {
         self.sender.subscribe()
     }
+
+    fn event_for_user(event: &NotificationEvent, user_id: uuid::Uuid) -> bool {
+        event.recipient_id == user_id
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -49,7 +53,7 @@ async fn connect(
 async fn serve(mut socket: WebSocket, user_id: uuid::Uuid, gateway: NotificationGateway) {
     let mut receiver = gateway.subscribe();
     while let Ok(event) = receiver.recv().await {
-        if event.recipient_id != user_id {
+        if !NotificationGateway::event_for_user(&event, user_id) {
             continue;
         }
         let Ok(payload) = serde_json::to_string(&event) else {
@@ -58,5 +62,46 @@ async fn serve(mut socket: WebSocket, user_id: uuid::Uuid, gateway: Notification
         if socket.send(Message::Text(payload.into())).await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NotificationEvent, NotificationGateway};
+    use tokio::sync::broadcast::error::RecvError;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn gateway_only_delivers_events_for_the_authenticated_recipient() {
+        let gateway = NotificationGateway::default();
+        let mut receiver = gateway.subscribe();
+        let user_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        gateway.publish(NotificationEvent {
+            notification_id: Uuid::new_v4(),
+            recipient_id: other_id,
+        });
+        gateway.publish(NotificationEvent {
+            notification_id: Uuid::new_v4(),
+            recipient_id: user_id,
+        });
+
+        let first = receiver.recv().await.expect("receive first event");
+        let second = receiver.recv().await.expect("receive second event");
+        assert!(!NotificationGateway::event_for_user(&first, user_id));
+        assert!(NotificationGateway::event_for_user(&second, user_id));
+    }
+
+    #[tokio::test]
+    async fn slow_subscriber_is_bounded_and_reports_backpressure() {
+        let gateway = NotificationGateway::default();
+        let mut receiver = gateway.subscribe();
+        for _ in 0..129 {
+            gateway.publish(NotificationEvent {
+                notification_id: Uuid::new_v4(),
+                recipient_id: Uuid::new_v4(),
+            });
+        }
+        assert!(matches!(receiver.recv().await, Err(RecvError::Lagged(skipped)) if skipped > 0));
     }
 }
