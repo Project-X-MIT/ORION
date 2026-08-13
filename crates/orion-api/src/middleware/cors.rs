@@ -8,7 +8,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 /// Origins are supplied by configuration; a wildcard origin is never emitted
 /// when credentials are enabled. Invalid values are ignored here and should be
 /// rejected by deployment configuration validation before startup.
-#[must_use]
 pub fn layer(origins: &[String]) -> CorsLayer {
     let origins = origins
         .iter()
