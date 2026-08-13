@@ -13,6 +13,10 @@ trap 'rm -f "$plain"' EXIT
 pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" > "$plain"
 pg_restore --list "$plain" >/dev/null
 openssl enc -aes-256-cbc -pbkdf2 -salt -in "$plain" -out "$encrypted" -pass env:BACKUP_ENCRYPTION_KEY
-sha256sum "$encrypted" > "$encrypted.sha256"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$encrypted" > "$encrypted.sha256"
+else
+  shasum -a 256 "$encrypted" > "$encrypted.sha256"
+fi
 chmod 600 "$encrypted" "$encrypted.sha256"
 printf 'created encrypted backup %s\n' "$encrypted"
