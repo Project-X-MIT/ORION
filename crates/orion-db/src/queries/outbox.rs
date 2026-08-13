@@ -4,9 +4,10 @@ use uuid::Uuid;
 
 use crate::models::OutboxEvent;
 
-const COLUMNS: &str = "id, event_type, payload, status, schema_version, request_id, trace_id,
-    created_at, dispatched_at, retry_count, job_status, job_attempts, job_error,
-    job_next_retry_at, job_started_at, lease_until";
+const COLUMNS: &str =
+    "e.id, e.event_type, e.payload, e.status, e.schema_version, e.request_id, e.trace_id,
+    e.created_at, e.dispatched_at, e.retry_count, e.job_status, e.job_attempts, e.job_error,
+    e.job_next_retry_at, e.job_started_at, e.lease_until";
 
 pub async fn claim_batch(
     pool: &PgPool,
