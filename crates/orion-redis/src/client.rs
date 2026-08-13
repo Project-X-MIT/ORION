@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use fred::{
-    interfaces::{KeysInterface, LuaInterface},
-    prelude::{Client, ClientLike, Config, Error as FredError, PerformanceConfig},
+    interfaces::{ClientLike, EventInterface, KeysInterface, LuaInterface, PubsubInterface},
+    prelude::{Client, Config, Error as FredError, PerformanceConfig},
 };
 use thiserror::Error;
 
@@ -117,6 +117,40 @@ impl RedisClient {
             .await
             .map_err(RedisClientError::Command)?;
         Ok(deleted == 1)
+    }
+
+    pub(crate) async fn eval_i64(
+        &self,
+        script: &str,
+        keys: Vec<fred::types::Key>,
+        args: Vec<fred::types::Value>,
+    ) -> Result<i64, RedisClientError> {
+        self.inner
+            .eval(script, keys, args)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) async fn publish(
+        &self,
+        channel: &str,
+        payload: String,
+    ) -> Result<i64, RedisClientError> {
+        self.inner
+            .publish(channel, payload)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) async fn subscribe(&self, channel: &str) -> Result<(), RedisClientError> {
+        self.inner
+            .subscribe(channel)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) fn message_rx(&self) -> tokio::sync::broadcast::Receiver<fred::types::Message> {
+        self.inner.message_rx()
     }
 
     pub async fn increment(
