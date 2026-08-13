@@ -51,6 +51,11 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci --ignore-scripts
+      # npm 10 can omit platform-specific optional packages when the lockfile
+      # was generated on another architecture. Restore the exact Rollup
+      # package version referenced by the lockfile before running Vite/Vitest.
+      - name: Restore Linux Rollup optional dependency
+        run: npm install --no-save --package-lock=false --ignore-scripts @rollup/rollup-linux-x64-gnu@4.62.4
       - run: npm run lint --workspace frontend
       - run: npm run type-check --workspace frontend
       - run: npm test --workspace frontend -- --run
