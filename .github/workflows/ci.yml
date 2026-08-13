@@ -101,7 +101,14 @@ jobs:
         run: |
           set -euo pipefail
           compose=(docker compose -f infra/compose/docker-compose.yml)
-          cleanup() { "${compose[@]}" down --volumes --remove-orphans; }
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              "${compose[@]}" logs --no-color api worker postgres redis || true
+            fi
+            "${compose[@]}" down --volumes --remove-orphans
+            exit "$status"
+          }
           trap cleanup EXIT
           "${compose[@]}" up --build --detach
           curl --fail --retry 30 --retry-delay 2 http://127.0.0.1:5173/health/live
