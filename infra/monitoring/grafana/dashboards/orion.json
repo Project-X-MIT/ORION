@@ -1,0 +1,10 @@
+{
+  "title": "ORION service overview",
+  "schemaVersion": 39,
+  "panels": [
+    {"type":"stat","title":"API availability","targets":[{"expr":"avg_over_time(up{job=\"orion-api\"}[5m])"}]},
+    {"type":"timeseries","title":"Request rate","targets":[{"expr":"sum(rate(http_requests_total{job=\"orion-api\"}[5m]))"}]},
+    {"type":"timeseries","title":"Outbox backlog","targets":[{"expr":"orion_outbox_pending_events"}]},
+    {"type":"timeseries","title":"Rating reconciliation failures","targets":[{"expr":"orion_rating_reconciliation_failures_total"}]}
+  ]
+}
