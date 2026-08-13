@@ -1,5 +1,13 @@
 # Observability and data minimization
 
+## Launch SLOs
+
+The platform gate uses 99.9% monthly API availability, p95 API latency below
+500 ms (p99 below 1 s), under 1% 5xx responses, outbox settlement lag below
+60 s, and research freshness below 15 minutes. Prometheus scrapes the API's
+`/metrics` endpoint; Grafana panels and page rules live under
+`infra/monitoring/`. Each page links to a runbook and names an owner.
+
 ORION uses structured JSON logs for operational events. HTTP tracing records
 only the request method, validated request ID, response status, and timing;
 the URI query string, headers, cookies, authorization values, and request or

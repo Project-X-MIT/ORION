@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 orion-common.workspace = true
 orion-db.workspace = true
 orion-domain.workspace = true

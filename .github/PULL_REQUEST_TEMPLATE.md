@@ -20,6 +20,7 @@ Explain the problem and the chosen boundary or tradeoff.
 - [ ] Frontend lint, type-check, tests, and build pass when applicable.
 - [ ] Contract/security/container checks pass when applicable.
 - [ ] Authorization, validation, empty, failure, retry, and concurrency paths are covered.
+- [ ] Intentionally unavailable evidence is explicitly identified; no external approval is inferred.
 
 List the exact commands and important results:
 
@@ -36,9 +37,11 @@ List the exact commands and important results:
 - [ ] Events are versioned and consumers are idempotent.
 - [ ] Logs and telemetry contain no secrets or unnecessary personal data.
 - [ ] Documentation and fixtures match the implemented contract.
+- [ ] Migration fresh-install and upgrade paths were exercised when schema inputs changed.
 
 ## Reviewer evidence
 
 - Required CODEOWNERS:
 - Screenshots/reports/artifacts:
 - Known follow-up issues:
+- External approvals/evidence unavailable or required owner action:
