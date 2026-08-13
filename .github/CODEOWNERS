@@ -1,57 +1,55 @@
 # Default integration review
-* @divi912
+* @projectxhq
 
 # Centralized single-writer composition paths
-/Cargo.toml @divi912
-/Cargo.lock @divi912
-/src/ @divi912
-/AGENTS.md @divi912
-/README.md @divi912
-/.github/ @divi912
-/crates/orion-api/Cargo.toml @divi912
-/crates/orion-common/ @divi912
-/crates/orion-domain/Cargo.toml @divi912
-/crates/orion-domain/src/entities.rs @divi912
-/crates/orion-domain/src/errors.rs @divi912
-/crates/orion-domain/src/events.rs @divi912
-/crates/orion-domain/src/identity.rs @divi912
-/crates/orion-domain/src/notification.rs @divi912
-/crates/orion-domain/src/traits.rs @divi912
-/crates/orion-domain/src/value_objects.rs @divi912
-/crates/orion-redis/Cargo.toml @divi912
-/crates/orion-redis/src/client.rs @divi912
-/crates/orion-redis/src/keys.rs @divi912
-/crates/orion-redis/src/locks/ @divi912
-/crates/orion-redis/src/pubsub/ @divi912
-/crates/orion-redis/src/rate_limit/ @divi912
-/crates/orion-redis/src/sessions/ @divi912
-/crates/orion-worker/Cargo.toml @divi912
-/crates/orion-worker/src/main.rs @divi912
-/crates/orion-worker/src/scheduler.rs @divi912
-/infra/ @divi912
-/scripts/ @divi912
+/Cargo.toml @projectxhq
+/Cargo.lock @projectxhq
+/src/ @projectxhq
+/AGENTS.md @projectxhq
+/README.md @projectxhq
+/.github/ @projectxhq
+/crates/orion-api/Cargo.toml @projectxhq
+/crates/orion-common/ @projectxhq
+/crates/orion-domain/Cargo.toml @projectxhq
+/crates/orion-domain/src/entities.rs @projectxhq
+/crates/orion-domain/src/errors.rs @projectxhq
+/crates/orion-domain/src/events.rs @projectxhq
+/crates/orion-domain/src/identity.rs @projectxhq
+/crates/orion-domain/src/notification.rs @projectxhq
+/crates/orion-domain/src/traits.rs @projectxhq
+/crates/orion-domain/src/value_objects.rs @projectxhq
+/crates/orion-redis/Cargo.toml @projectxhq
+/crates/orion-redis/src/client.rs @projectxhq
+/crates/orion-redis/src/keys.rs @projectxhq
+/crates/orion-redis/src/locks/ @projectxhq
+/crates/orion-redis/src/pubsub/ @projectxhq
+/crates/orion-redis/src/rate_limit/ @projectxhq
+/crates/orion-redis/src/sessions/ @projectxhq
+/crates/orion-worker/Cargo.toml @projectxhq
+/crates/orion-worker/src/main.rs @projectxhq
+/crates/orion-worker/src/scheduler.rs @projectxhq
+/infra/ @projectxhq
+/scripts/ @projectxhq
 
 # Feature ownership; Div remains the integration reviewer
-/crates/orion-domain/src/quiz/ @akaidk @divi912
-/crates/orion-domain/src/elo.rs @akaidk @divi912
-/crates/orion-api/src/routes/quiz.rs @akaidk @divi912
-/frontend/src/features/quiz/ @akaidk @divi912
+/crates/orion-domain/src/quiz/ @akaidk @projectxhq
+/crates/orion-domain/src/elo.rs @akaidk @projectxhq
+/crates/orion-api/src/routes/quiz.rs @akaidk @projectxhq
+/frontend/src/features/quiz/ @akaidk @projectxhq
+/crates/orion-domain/src/leaderboard.rs @ShauryaBijalwan @projectxhq
+/crates/orion-domain/src/profile.rs @ShauryaBijalwan @projectxhq
+/crates/orion-api/src/routes/leaderboard.rs @ShauryaBijalwan @projectxhq
+/crates/orion-api/src/routes/profile.rs @ShauryaBijalwan @projectxhq
+/frontend/src/features/leaderboard/ @ShauryaBijalwan @projectxhq
+/frontend/src/features/profile/ @ShauryaBijalwan @projectxhq
+/frontend/src/shared/ @ShauryaBijalwan @projectxhq
+/crates/orion-domain/src/research.rs @shivanshrawat13aug2007-commits @projectxhq
+/crates/orion-api/src/routes/research.rs @shivanshrawat13aug2007-commits @projectxhq
+/frontend/src/features/research/ @shivanshrawat13aug2007-commits @projectxhq
 
-/crates/orion-domain/src/leaderboard.rs @ShauryaBijalwan @divi912
-/crates/orion-domain/src/profile.rs @ShauryaBijalwan @divi912
-/crates/orion-api/src/routes/leaderboard.rs @ShauryaBijalwan @divi912
-/crates/orion-api/src/routes/profile.rs @ShauryaBijalwan @divi912
-/frontend/src/features/leaderboard/ @ShauryaBijalwan @divi912
-/frontend/src/features/profile/ @ShauryaBijalwan @divi912
-/frontend/src/shared/ @ShauryaBijalwan @divi912
-
-/crates/orion-domain/src/research.rs @shivanshrawat13aug2007-commits @divi912
-/crates/orion-api/src/routes/research.rs @shivanshrawat13aug2007-commits @divi912
-/frontend/src/features/research/ @shivanshrawat13aug2007-commits @divi912
-
-/crates/orion-domain/src/news.rs @sudhanshu001122 @divi912
-/crates/orion-domain/src/learning.rs @sudhanshu001122 @divi912
-/crates/orion-api/src/routes/news.rs @sudhanshu001122 @divi912
-/crates/orion-api/src/routes/learning.rs @sudhanshu001122 @divi912
-/frontend/src/features/news/ @sudhanshu001122 @divi912
-/frontend/src/features/learning/ @sudhanshu001122 @divi912
+/crates/orion-domain/src/news.rs @sudhanshu001122 @projectxhq
+/crates/orion-domain/src/learning.rs @sudhanshu001122 @projectxhq
+/crates/orion-api/src/routes/news.rs @sudhanshu001122 @projectxhq
+/crates/orion-api/src/routes/learning.rs @sudhanshu001122 @projectxhq
+/frontend/src/features/news/ @sudhanshu001122 @projectxhq
+/frontend/src/features/learning/ @sudhanshu001122 @projectxhq
