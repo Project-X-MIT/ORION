@@ -66,6 +66,12 @@ impl UserRepository {
             .map_err(DatabaseError::from_sqlx)
     }
 
+    pub async fn anonymize(&self, user_id: Uuid) -> Result<bool, DatabaseError> {
+        users::anonymize(&self.pool, user_id)
+            .await
+            .map_err(DatabaseError::from_sqlx)
+    }
+
     #[must_use]
     pub const fn pool(&self) -> &PgPool {
         &self.pool
