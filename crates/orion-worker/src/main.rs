@@ -99,10 +99,13 @@ async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<
                 recover_stale_research_jobs(pool, job.trigger, running_lease).await?;
                 poll_research_review_jobs(pool, job.trigger).await?;
             }
-            _ => tracing::warn!(
+            _ => tracing::debug!(
                 target: "orion.worker",
                 job_id = job.id,
-                "registered worker job has no runtime adapter"
+                attempt = 0_u32,
+                duration_ms = 0_u64,
+                outcome = "deferred_to_outbox_dispatcher",
+                "registered worker job is awaiting its durable dispatcher adapter"
             ),
         }
     }

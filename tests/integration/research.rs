@@ -842,6 +842,57 @@ async fn research_elo_request_is_exactly_once_and_failures_are_retryable(
     );
     assert_eq!(event.3, "pending");
 
+    // A process crash after claim leaves a leased running row. The recovery
+    // path records a retry without applying a second business effect, and the
+    // same event can then be claimed and completed exactly once.
+    let recovery_event: Uuid = sqlx::query_scalar(
+        "INSERT INTO outbox_events (event_type, payload)
+         VALUES ('orion.research.elo_award.requested', $1)
+         RETURNING id",
+    )
+    .bind(json!({"paper_id": paper_id}))
+    .fetch_one(&pool)
+    .await?;
+    let first_claim = claim_research_review_job(&pool, recovery_event)
+        .await?
+        .expect("recovery fixture should be claimed");
+    assert_eq!(first_claim.attempts, 1);
+    sqlx::query(
+        "UPDATE outbox_events
+         SET job_started_at = CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+         WHERE id = $1",
+    )
+    .bind(recovery_event)
+    .execute(&pool)
+    .await?;
+    let recovered = fail_research_review_job(&pool, recovery_event, "worker execution timed out")
+        .await?
+        .expect("stale claim should transition to retry");
+    assert_eq!(recovered.state, ResearchReviewJobState::Retry);
+    assert_eq!(recovered.last_error.as_deref(), Some("dependency_timeout"));
+    sqlx::query(
+        "UPDATE outbox_events
+         SET job_next_retry_at = CURRENT_TIMESTAMP
+         WHERE id = $1",
+    )
+    .bind(recovery_event)
+    .execute(&pool)
+    .await?;
+    let second_claim = claim_research_review_job(&pool, recovery_event)
+        .await?
+        .expect("recovered job should be claimable");
+    assert_eq!(second_claim.attempts, 2);
+    assert!(
+        orion_worker::jobs::research_review::complete_research_review_job(&pool, recovery_event)
+            .await?
+    );
+    let recovery_state: (String, i32) =
+        sqlx::query_as("SELECT job_status, job_attempts FROM outbox_events WHERE id = $1")
+            .bind(recovery_event)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(recovery_state, ("completed".to_owned(), 2));
+
     // Duplicate delivery must not claim a second attempt or re-run the job
     // after the first delivery has completed it.
     assert!(!process_research_award(&pool, paper_id).await?);

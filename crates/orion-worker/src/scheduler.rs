@@ -16,9 +16,8 @@ pub struct WorkerJobSpec {
 pub const RESEARCH_REVIEW_JOB_ID: &str = "research_review";
 pub const NOTIFICATION_JOB_ID: &str = "notification";
 
-// TODO(DIV-06, DIV-08): Reconcile this shared registration metadata with
-// Div's merged implementations after those issues land. Phantom's body stays
-// feature-owned; only the integration wiring should change at that point.
+// Registry metadata is platform-owned; feature modules own the referenced
+// bodies and may add fixtures without changing scheduler execution semantics.
 pub const WORKER_JOB_REGISTRY: &[WorkerJobSpec] = &[
     WorkerJobSpec {
         id: RESEARCH_REVIEW_JOB_ID,
@@ -71,8 +70,22 @@ mod tests {
     fn retry_schedule_is_bounded_and_deterministic() {
         let policy = RetryPolicy::default();
         assert_eq!(policy.delay(1, 42), policy.delay(1, 42));
-        assert!(policy.delay(4, 42).unwrap() <= Duration::from_secs(60));
+        assert!(policy.delay(1, 42).unwrap() >= Duration::from_millis(800));
+        assert!(policy.delay(1, 42).unwrap() <= Duration::from_millis(1_200));
+        assert!(policy.delay(4, 42).unwrap() >= Duration::from_millis(6_400));
+        assert!(policy.delay(4, 42).unwrap() <= Duration::from_millis(9_600));
         assert_eq!(policy.delay(5, 42), None);
+    }
+
+    #[test]
+    fn registered_feature_fixtures_have_stable_execution_contracts() {
+        assert!(WORKER_JOB_REGISTRY.iter().all(|job| {
+            !job.id.is_empty()
+                && !job.registry_owner.is_empty()
+                && !job.body_owner.is_empty()
+                && job.body_path.contains("::")
+                && !job.trigger.is_empty()
+        }));
     }
 }
 use std::time::Duration;
