@@ -29,6 +29,11 @@ contracts:
   stable shape for API and feed consumers.
 - `NewsIngestionRun` mirrors `news_ingestion_runs` and uses a typed status so
   run outcomes cannot be treated as arbitrary strings.
+- Under the completed DB-05 schema, the reconciled item-error count is derived
+  as `articles_seen - articles_inserted`. `error_message` stores only the
+  bounded run-level error code, so the worker does not create a competing
+  schema or migration authority. A future repository query may expose the
+  derived count as an alias without changing the persisted baseline.
 - `ArticleLifecycle` and `ProviderHealth` make the article and provider state
   machines explicit. Articles advance only through
   `fetched -> normalized -> validated -> deduplicated -> persisted -> published`.

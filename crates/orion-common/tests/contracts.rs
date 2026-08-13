@@ -15,6 +15,10 @@ fn fixture(name: &str) -> &'static str {
     }
 }
 
+fn normalized_fixture(name: &str) -> String {
+    fixture(name).replace("\r\n", "\n").trim_end().to_owned()
+}
+
 #[test]
 fn api_envelopes_match_golden_fixtures() {
     let request_id = RequestId::from_uuid(
@@ -29,7 +33,7 @@ fn api_envelopes_match_golden_fixtures() {
     );
     assert_eq!(
         serde_json::to_string_pretty(&success).expect("serialize success"),
-        fixture("success").trim_end()
+        normalized_fixture("success")
     );
 
     let mut details = BTreeMap::new();
@@ -44,7 +48,7 @@ fn api_envelopes_match_golden_fixtures() {
     );
     assert_eq!(
         serde_json::to_string_pretty(&failure).expect("serialize failure"),
-        fixture("failure").trim_end()
+        normalized_fixture("failure")
     );
 }
 
