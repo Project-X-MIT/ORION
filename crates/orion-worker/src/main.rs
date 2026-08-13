@@ -64,6 +64,12 @@ async fn main() -> Result<()> {
         .await
         .context("worker database startup failed")?;
 
+    if std::env::var("ORION_MIGRATE_ONLY").as_deref() == Ok("1") {
+        tracing::info!("database migrations applied; exiting migrate-only mode");
+        pool.close().await;
+        return Ok(());
+    }
+
     tracing::info!(
         poll_interval_seconds = config.poll_interval.as_secs(),
         "orion-worker is ready"

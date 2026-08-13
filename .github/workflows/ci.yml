@@ -76,3 +76,34 @@ jobs:
       - run: git diff --check
       - run: test -s Cargo.lock
       - run: test -s frontend/package-lock.json
+
+  containers:
+    name: containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate Compose files
+        run: |
+          docker compose -f infra/compose/docker-compose.yml config --quiet
+          ORION_API_IMAGE=example.invalid/orion-api@sha256:$(printf '%064d' 0) \
+          ORION_WORKER_IMAGE=example.invalid/orion-worker@sha256:$(printf '%064d' 0) \
+          ORION_FRONTEND_IMAGE=example.invalid/orion-frontend@sha256:$(printf '%064d' 0) \
+          DATABASE_URL=postgres://orion:orion@db/orion \
+          REDIS_URL=redis://redis:6379 \
+          CORS_ALLOWED_ORIGINS=https://orion.example.com \
+          ORION_DOMAIN=orion.example.com \
+          docker compose -f infra/compose/docker-compose.prod.yml config --quiet
+      - name: Build and smoke test local stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f infra/compose/docker-compose.yml)
+          cleanup() { "${compose[@]}" down --volumes --remove-orphans; }
+          trap cleanup EXIT
+          "${compose[@]}" up --build --detach
+          curl --fail --retry 30 --retry-delay 2 http://127.0.0.1:5173/health/live
+          "${compose[@]}" ps
+          "${compose[@]}" stop api worker frontend

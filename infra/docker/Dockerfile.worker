@@ -1,0 +1,20 @@
+FROM rust:1.85-bookworm AS builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY src ./src
+COPY tests ./tests
+RUN cargo build --release --locked -p orion-worker
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin orion
+COPY --from=builder /src/target/release/orion-worker /usr/local/bin/orion-worker
+USER 10001:10001
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+    CMD sh -c 'kill -0 1'
+ENTRYPOINT ["/usr/local/bin/orion-worker"]

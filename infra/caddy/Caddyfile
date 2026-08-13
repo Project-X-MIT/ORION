@@ -1,0 +1,25 @@
+(orion_app) {
+    encode gzip
+
+    handle /api/* {
+        reverse_proxy api:3000
+    }
+
+    handle /health* {
+        reverse_proxy api:3000
+    }
+
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
+
+:8080 {
+    import orion_app
+}
+
+{$ORION_DOMAIN:localhost} {
+    import orion_app
+}
