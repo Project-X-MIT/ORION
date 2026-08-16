@@ -137,27 +137,39 @@ async fn validate_numeric_questions(
     predictions: &[crate::models::AdvancedPredictionSubmission],
 ) -> Result<()> {
     for prediction in predictions {
-        let is_numeric = sqlx::query_scalar::<_, bool>(
+        let value_scale = sqlx::query_scalar::<_, i32>(
             r#"
-            SELECT EXISTS (
-                SELECT 1
-                FROM quiz_questions AS question
-                WHERE question.id = $1
-                  AND question.quiz_type = 'advanced'
-                  AND question.active = TRUE
-                  AND NOT EXISTS (
-                      SELECT 1 FROM quiz_options AS option
-                      WHERE option.question_id = question.id
-                  )
-            )
+            SELECT advanced_value_scale
+            FROM quiz_questions AS question
+            WHERE question.id = $1
+              AND question.quiz_type = 'advanced'
+              AND question.active = TRUE
+              AND NOT EXISTS (
+                  SELECT 1 FROM quiz_options AS option
+                  WHERE option.question_id = question.id
+              )
+              AND question.advanced_unit_code IS NOT NULL
+              AND question.advanced_value_scale IS NOT NULL
+              AND question.advanced_market_calendar_id IS NOT NULL
+              AND question.advanced_market_calendar_version IS NOT NULL
+              AND question.advanced_market_timezone IS NOT NULL
+              AND question.advanced_horizon_at IS NOT NULL
+              AND question.advanced_expires_at IS NOT NULL
+              AND question.advanced_expires_at > question.advanced_horizon_at
+              AND question.advanced_provider_key IS NOT NULL
             "#,
         )
         .bind(prediction.question_id)
-        .fetch_one(&mut **transaction)
+        .fetch_optional(&mut **transaction)
         .await?;
-        if !is_numeric {
+        let Some(value_scale) = value_scale else {
             return Err(validation_error(
                 "numeric predictions must reference active Advanced numeric questions",
+            ));
+        };
+        if prediction.value.scale() > u32::try_from(value_scale).unwrap_or(u32::MAX) {
+            return Err(validation_error(
+                "numeric prediction exceeds the question's exact decimal scale",
             ));
         }
     }

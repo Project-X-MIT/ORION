@@ -1,0 +1,15 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000060",
+  "event_type": "orion.quiz.cache.invalidate",
+  "schema_version": 1,
+  "occurred_at": "2026-08-16T12:01:00Z",
+  "producer": "orion-worker",
+  "payload": {
+    "attempt_id": "00000000-0000-0000-0000-000000000041",
+    "user_id": "00000000-0000-0000-0000-000000000042",
+    "question_ids": [
+      "00000000-0000-0000-0000-000000000043"
+    ],
+    "dedupe_key": "advanced-settlement:00000000-0000-0000-0000-000000000041:cache"
+  }
+}

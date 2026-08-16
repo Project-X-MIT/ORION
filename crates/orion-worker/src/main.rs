@@ -10,11 +10,15 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use orion_worker::{
+    jobs::advanced_settlement::{
+        process_advanced_submission_event, AdvancedSettlementOutcome,
+        PostgresAdvancedActualProvider,
+    },
     jobs::research_review::{
         claim_research_review_job, fail_research_review_job, process_research_award,
     },
     jobs::{notification::process_notification, outbox_dispatch},
-    scheduler::{self, NOTIFICATION_JOB_ID, RESEARCH_REVIEW_JOB_ID},
+    scheduler::{self, ADVANCED_SETTLEMENT_JOB_ID, NOTIFICATION_JOB_ID, RESEARCH_REVIEW_JOB_ID},
 };
 
 const DEFAULT_POLL_INTERVAL_SECONDS: u64 = 5;
@@ -77,14 +81,15 @@ async fn main() -> Result<()> {
         poll_interval_seconds = config.poll_interval.as_secs(),
         "orion-worker is ready"
     );
-    run(pool.clone(), &config).await;
+    let provider = PostgresAdvancedActualProvider::new(pool.clone());
+    run(pool.clone(), &config, &provider).await;
 
     tracing::info!("orion-worker is shutting down");
     let _ = tokio::time::timeout(config.shutdown_timeout, pool.close()).await;
     Ok(())
 }
 
-async fn run(pool: PgPool, config: &WorkerConfig) {
+async fn run(pool: PgPool, config: &WorkerConfig, provider: &PostgresAdvancedActualProvider) {
     let mut ticker = interval(config.poll_interval);
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -92,7 +97,7 @@ async fn run(pool: PgPool, config: &WorkerConfig) {
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                if let Err(_error) = poll_registered_jobs(&pool, config.running_lease).await {
+                if let Err(_error) = poll_registered_jobs(&pool, provider, config.running_lease).await {
                     tracing::error!(target: "orion.worker", "worker poll failed; will retry");
                 }
             }
@@ -101,7 +106,11 @@ async fn run(pool: PgPool, config: &WorkerConfig) {
     }
 }
 
-async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<()> {
+async fn poll_registered_jobs(
+    pool: &PgPool,
+    provider: &PostgresAdvancedActualProvider,
+    running_lease: Duration,
+) -> Result<()> {
     let _ = outbox_dispatch::dispatch_once(pool, MAX_PENDING_JOBS_PER_POLL).await?;
     for job in scheduler::WORKER_JOB_REGISTRY {
         match job.id {
@@ -111,6 +120,9 @@ async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<
             }
             NOTIFICATION_JOB_ID => {
                 poll_notification_jobs(pool, job.trigger, running_lease).await?;
+            }
+            ADVANCED_SETTLEMENT_JOB_ID => {
+                poll_advanced_settlement_jobs(pool, provider, job.trigger, running_lease).await?;
             }
             _ => tracing::debug!(
                 target: "orion.worker",
@@ -123,6 +135,70 @@ async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<
         }
     }
     Ok(())
+}
+
+async fn poll_advanced_settlement_jobs(
+    pool: &PgPool,
+    provider: &PostgresAdvancedActualProvider,
+    event_type: &str,
+    running_lease: Duration,
+) -> Result<()> {
+    let events = orion_db::queries::outbox::claim_batch_for_event_type(
+        pool,
+        event_type,
+        MAX_PENDING_JOBS_PER_POLL,
+        running_lease.as_secs() as i64,
+    )
+    .await?;
+
+    for event in events {
+        let result = process_advanced_submission_event(pool, provider, &event).await;
+        match result {
+            Ok(AdvancedSettlementOutcome::Completed(_))
+            | Ok(AdvancedSettlementOutcome::AlreadyCompleted(_))
+            | Ok(AdvancedSettlementOutcome::DeadLettered) => {
+                let _ = orion_db::queries::outbox::complete(pool, event.id).await?;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "orion.worker",
+                    event_id = %event.id,
+                    outcome = "retry_scheduled",
+                    error_code = advanced_error_code(&error),
+                    "Advanced settlement event was not acknowledged"
+                );
+                let delay = 2_i64
+                    .saturating_pow((event.job_attempts.max(1) - 1) as u32)
+                    .min(300);
+                orion_db::queries::outbox::fail(
+                    pool,
+                    event.id,
+                    advanced_error_code(&error),
+                    outbox_dispatch::MAX_ATTEMPTS,
+                    Utc::now() + chrono::Duration::seconds(delay),
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn advanced_error_code(
+    error: &orion_worker::jobs::advanced_settlement::AdvancedSettlementError,
+) -> &'static str {
+    use orion_worker::jobs::advanced_settlement::AdvancedSettlementError;
+
+    match error {
+        AdvancedSettlementError::Database(_) => "database_unavailable",
+        AdvancedSettlementError::ProviderUnavailable => "provider_unavailable",
+        AdvancedSettlementError::ProviderTerminal => "provider_terminal_failure",
+        AdvancedSettlementError::ActualNotAvailable => "actual_not_available",
+        AdvancedSettlementError::InvalidActual(_) => "invalid_actual_value",
+        AdvancedSettlementError::InvalidAttemptContext => "invalid_attempt_context",
+        AdvancedSettlementError::Outbox(_) => "outbox_unavailable",
+        AdvancedSettlementError::InjectedCrash(_) => "worker_crash_recovery",
+    }
 }
 
 async fn poll_notification_jobs(

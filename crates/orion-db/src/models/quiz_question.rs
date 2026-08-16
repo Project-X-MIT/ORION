@@ -61,6 +61,23 @@ pub struct QuizQuestionWithOptions {
     pub rating: Option<QuestionRating>,
 }
 
+/// Immutable Advanced question facts required by the settlement worker.
+/// Nullable database columns are filtered by the query before this model is
+/// constructed, so the worker never invents a horizon or value contract.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct AdvancedQuestionContract {
+    pub id: Uuid,
+    pub unit_code: String,
+    pub currency_code: Option<String>,
+    pub value_scale: i32,
+    pub market_calendar_id: String,
+    pub market_calendar_version: String,
+    pub market_timezone: String,
+    pub horizon_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub provider_key: String,
+}
+
 /// The safe option projection for clients that must not receive the answer key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicQuizOption {

@@ -58,3 +58,13 @@ identifier, attempt counts, retry delay, and bounded reason metadata.
 retry-budget context only, such as `outbox_persistence_failed`,
 `dependency_timeout`, or `invalid_research_evaluation`. They never store raw
 errors, SQL details, report content, review text, or user identifiers.
+
+## Advanced settlement worker
+
+Advanced settlement logs only the event ID, attempt ID, bounded attempt count,
+and allowlisted error code. Provider outage alerts use
+`target=orion.alerts`, `alert=advanced_actual_provider_unavailable`, and keep
+the accepted attempt pending. The typed outbox adapter records only bounded
+codes such as `provider_unavailable`, `invalid_actual_value`, and
+`retry_budget_exhausted`; it never stores provider response bodies, credentials,
+actual-value payloads, or user content in logs or job-error columns.
