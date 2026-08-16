@@ -11,20 +11,29 @@ pub async fn ensure_pending_event(
     schema_version: i32,
     payload: impl Serialize,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar::<_, bool>(
-        "WITH inserted AS (
-             INSERT INTO outbox_events (id, event_type, schema_version, payload)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (id) DO NOTHING
-         )
-         SELECT status = 'pending' FROM outbox_events WHERE id = $1",
+    let inserted = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO outbox_events (id, event_type, schema_version, payload)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id",
     )
     .bind(event_id)
     .bind(event_type)
     .bind(schema_version)
     .bind(sqlx::types::Json(payload))
-    .fetch_one(pool)
-    .await
+    .fetch_optional(pool)
+    .await?;
+
+    if inserted.is_some() {
+        return Ok(true);
+    }
+
+    // This is a new statement/snapshot after a concurrent conflicting insert
+    // has committed, so it can observe the existing event reliably.
+    sqlx::query_scalar::<_, bool>("SELECT status = 'pending' FROM outbox_events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(pool)
+        .await
 }
 
 pub async fn mark_event_dispatched(pool: &PgPool, event_id: Uuid) -> sqlx::Result<bool> {
