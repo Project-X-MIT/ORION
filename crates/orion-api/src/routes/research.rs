@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use orion_common::{ErrorCode, MAX_PAGE_SIZE};
 use orion_db::{
     error::DatabaseError,
-    models::{ResearchPaper, ResearchPaperStatus},
+    models::{ResearchPaper, ResearchPaperStatus, ResearchReview},
     repositories::ResearchRepository,
 };
 use orion_redis::cache::research as research_cache;
@@ -42,7 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/{research_id}/revisions", post(create_revision))
         .route("/{research_id}", get(get_research).put(update_draft))
         .route("/{research_id}/submission", post(submit_paper))
-        .route("/{research_id}/reviews", post(review))
+        .route("/{research_id}/reviews", get(list_reviews).post(review))
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,10 +128,38 @@ struct ResearchListResponse {
     has_more: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct ResearchReviewsResponse {
+    reviews: Vec<ResearchReviewResponse>,
+}
+
+/// Author-visible review feedback. Reviewer identity and internal award
+/// bookkeeping are intentionally excluded from this response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchReviewResponse {
+    pub score: Option<f64>,
+    pub recommendation: String,
+    pub comments: Option<String>,
+    pub evaluation: Option<Value>,
+    pub reviewed_at: DateTime<Utc>,
+}
+
+impl From<ResearchReview> for ResearchReviewResponse {
+    fn from(review: ResearchReview) -> Self {
+        Self {
+            score: review.score,
+            recommendation: review.recommendation,
+            comments: review.comments,
+            evaluation: review.evaluation_result,
+            reviewed_at: review.reviewed_at,
+        }
+    }
+}
+
 /// Fields deliberately shared by author status reads and published reads.
 /// This is also the only research representation used by the Redis cache.
-/// Reviewer identities, review payloads, and Elo award bookkeeping remain
-/// internal to the PostgreSQL/worker workflow and are never cached.
+/// Reviewer identities and review payloads remain private; the completed
+/// publication award is a small public projection of the paper's result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchPaperResponse {
     pub id: Uuid,
@@ -145,6 +173,9 @@ pub struct ResearchPaperResponse {
     pub under_review_at: Option<DateTime<Utc>>,
     pub decided_at: Option<DateTime<Utc>>,
     pub published_at: Option<DateTime<Utc>>,
+    pub elo_award: Option<i32>,
+    pub elo_awarded: bool,
+    pub elo_awarded_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -162,6 +193,9 @@ impl From<ResearchPaper> for ResearchPaperResponse {
             under_review_at: paper.under_review_at,
             decided_at: paper.decided_at,
             published_at: paper.published_at,
+            elo_award: paper.elo_award,
+            elo_awarded: paper.elo_awarded,
+            elo_awarded_at: paper.elo_awarded_at,
             created_at: paper.created_at,
             updated_at: paper.updated_at,
         }
@@ -386,6 +420,9 @@ fn cache_matches_published_paper(
         || cached.value.id != paper.id
         || !is_cacheable_published(&cached.value)
         || cached.value.published_at != paper.published_at
+        || cached.value.elo_award != paper.elo_award
+        || cached.value.elo_awarded != paper.elo_awarded
+        || cached.value.elo_awarded_at != paper.elo_awarded_at
     {
         return false;
     }
@@ -538,6 +575,39 @@ async fn create_revision(
     Ok(private_success(
         &headers,
         ResearchPaperResponse::from(paper),
+    ))
+}
+
+/// Returns feedback only to the paper author. Public readers and other users
+/// receive the same not-found response used for private paper access.
+async fn list_reviews(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(research_id): Path<String>,
+    user: AuthenticatedUser,
+) -> Result<impl IntoResponse, ApiProblem> {
+    let request_id = request_id(&headers);
+    let research_id = parse_research_id(&research_id, request_id)?;
+    let repository = ResearchRepository::new(state.db);
+    let paper = repository
+        .find_by_id(research_id)
+        .await
+        .map_err(|error| database_problem(error, request_id))?;
+    if !paper.is_some_and(|paper| paper.author_id == user.user.id) {
+        return Err(not_found(request_id));
+    }
+
+    let reviews = repository
+        .list_reviews_by_paper_id(research_id)
+        .await
+        .map_err(|error| database_problem(error, request_id))?
+        .into_iter()
+        .map(ResearchReviewResponse::from)
+        .collect();
+
+    Ok(private_success(
+        &headers,
+        ResearchReviewsResponse { reviews },
     ))
 }
 
@@ -1001,8 +1071,8 @@ mod tests {
         author_edit_access, cache_matches_published_paper, can_read_research,
         is_cacheable_published, prepare_review, private_success, published_cache_version,
         sanitize_text, EditAccess, ResearchDraftRequest, ResearchEvaluationPayload,
-        ResearchEvidence, ResearchJson, ResearchPaper, ResearchPaperResponse,
-        ResearchReviewRequest, ResearchRubricScores, PRIVATE_CACHE_CONTROL,
+        ResearchEvidence, ResearchJson, ResearchPaper, ResearchPaperResponse, ResearchReview,
+        ResearchReviewRequest, ResearchReviewResponse, ResearchRubricScores, PRIVATE_CACHE_CONTROL,
     };
 
     fn paper(status: &str, author_id: uuid::Uuid) -> ResearchPaper {
@@ -1030,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn published_response_and_cache_payload_redact_internal_state() {
+    fn published_response_exposes_award_summary_without_internal_state() {
         let now = Utc::now();
         let paper = ResearchPaper {
             id: uuid::Uuid::new_v4(),
@@ -1059,7 +1129,38 @@ mod tests {
         assert_eq!(response["abstract"], "Summary");
         assert!(response.get("decided_by").is_none());
         assert!(response.get("evaluation_result").is_none());
-        assert!(response.get("elo_award").is_none());
+        assert_eq!(response["elo_award"], 25);
+        assert_eq!(response["elo_awarded"], true);
+        assert!(response["elo_awarded_at"].is_string());
+    }
+
+    #[test]
+    fn author_review_response_includes_feedback_but_redacts_reviewer_identity() {
+        let review = ResearchReview {
+            id: uuid::Uuid::new_v4(),
+            paper_id: uuid::Uuid::new_v4(),
+            reviewer_id: uuid::Uuid::new_v4(),
+            score: Some(72.0),
+            recommendation: "reject".to_owned(),
+            comments: Some("Clarify the sampling method.".to_owned()),
+            evaluation_result: Some(json!({
+                "overall_score": 72,
+                "recommendation": "reject",
+                "rationale": "The methodology needs clarification.",
+                "strengths": ["Clear research question"],
+                "concerns": ["Sampling method is underspecified"],
+                "evidence": []
+            })),
+            reviewed_at: Utc::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let response = serde_json::to_value(ResearchReviewResponse::from(review)).unwrap();
+        assert_eq!(response["recommendation"], "reject");
+        assert_eq!(response["comments"], "Clarify the sampling method.");
+        assert!(response["evaluation"].is_object());
+        assert!(response.get("reviewer_id").is_none());
     }
 
     #[test]
@@ -1114,6 +1215,10 @@ mod tests {
             &mismatched_payload_version,
             &current
         ));
+
+        let mut stale_award = cached.clone();
+        stale_award.value.elo_award = Some(30);
+        assert!(!cache_matches_published_paper(&stale_award, &current));
 
         let mut wrong_identity = cached;
         wrong_identity.value.id = uuid::Uuid::new_v4();

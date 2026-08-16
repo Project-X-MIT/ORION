@@ -51,7 +51,9 @@ pub enum ResearchCacheError {
 /// The cache envelope carries the published row version so an invalidation
 /// producer can distinguish a stale write from the current cached value. `T`
 /// must be a public published projection; this envelope is not a store for
-/// drafts, review records/decisions, or Elo award state.
+/// drafts or review records/decisions. The completed public award summary may
+/// be included in that projection and is checked against PostgreSQL before a
+/// cache hit is served.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedResearchCache<T> {
     pub schema_version: u16,

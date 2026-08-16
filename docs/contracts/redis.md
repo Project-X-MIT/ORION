@@ -23,7 +23,7 @@ lifecycle, review, or award outcomes.
 | `cache.quiz_question` | akaidk | `orion:v1:cache:quiz_question:{question_id}` | 5 minutes; invalidate after mutation. |
 | `cache.leaderboard` | ShauryaBijalwan | `orion:v1:cache:leaderboard:{limit}:{offset}` | 1 minute; invalidate after rating/snapshot commits. |
 | `cache.profile` | ShauryaBijalwan | `orion:v1:cache:profile:{user_id}` | 2 minutes; invalidate after profile/rating/rank commits. |
-| `cache.research` | divi912 | `orion:v1:cache:research:{research_id}` | 5 minutes; Phantom owns the cache module body, while only the public projection of published research is cached; drafts, reviews, and award state remain PostgreSQL-authoritative. |
+| `cache.research` | divi912 | `orion:v1:cache:research:{research_id}` | 5 minutes; Phantom owns the cache module body, while only the public projection of published research is cached; drafts and review records remain PostgreSQL-authoritative, and award fields are rechecked against PostgreSQL before serving a hit. |
 | `cache.news_feed` | sudhanshu001122 | `orion:v1:cache:news_feed:{limit}:{offset}` | 2 minutes; invalidate after ingestion commits. |
 | `cache.learning_course` | sudhanshu001122 | `orion:v1:cache:learning_course:{course_id}` | 1 hour; invalidate after content commits. |
 | `pubsub.notification` | divi912 | `orion:v1:pubsub:notification` | Ephemeral channel; PostgreSQL/outbox is durable. |
