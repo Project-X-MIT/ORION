@@ -64,3 +64,15 @@ the evaluated/publication version from direct SQL writers, including changes
 that would otherwise leave `published_at` unchanged and bypass cache version
 checks. Rollback is forward-only; the trigger is removed only by a compensating
 migration after an explicit policy decision.
+
+Migration `202608160002_advanced_predictions.sql` is owned by the Advanced
+Quiz feature owner, with Div responsible for merge ordering. It adds the
+`advanced_predictions` table for exact numeric values accepted by the public
+Advanced endpoint while an attempt remains pending. The primary key prevents
+duplicate question rows for one attempt, and the question/submitted-time index
+supports worker lookup without making Redis authoritative. The compatibility
+window is additive: old option-based Advanced readers and writers remain
+compatible, while the numeric submission writer is deployed only with this
+migration. Rollback is forward-only: stop accepting numeric submissions and
+retain the rows for worker recovery; do not delete accepted predictions or
+remove the table from a database that has recorded this migration.

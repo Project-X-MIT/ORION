@@ -6,16 +6,22 @@ const AUTH_PATHS = new Set(["/login", "/register"]);
 
 export function getAuthenticatedRedirect(search: string): string {
   const returnTo = new URLSearchParams(search).get("returnTo");
-  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//")) return "/";
+  if (
+    !returnTo ||
+    !returnTo.startsWith("/") ||
+    returnTo.startsWith("//") ||
+    returnTo.includes("\\")
+  ) return "/";
 
-  let pathname: string;
+  let destination: URL;
   try {
-    pathname = new URL(returnTo, "https://orion.local").pathname;
+    destination = new URL(returnTo, "https://orion.local");
   } catch {
     return "/";
   }
 
-  return AUTH_PATHS.has(pathname) ? "/" : returnTo;
+  if (destination.origin !== "https://orion.local" || AUTH_PATHS.has(destination.pathname)) return "/";
+  return `${destination.pathname}${destination.search}${destination.hash}`;
 }
 
 function RedirectToApplication() {

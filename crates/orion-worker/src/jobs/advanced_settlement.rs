@@ -196,6 +196,27 @@ pub async fn locate_pending_advanced_attempts(
     quiz_attempts::pending_advanced_by_user_id(pool, user_id, limit, offset).await
 }
 
+/// Loads the exact numeric predictions persisted by the API for a pending
+/// attempt. Question contracts remain supplied by the DB-02 adapter/provider
+/// boundary; this function only reads PostgreSQL prediction facts.
+pub async fn load_advanced_predictions(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<Vec<AdvancedPrediction>, sqlx::Error> {
+    quiz_attempts::advanced_predictions_by_attempt_id(pool, attempt_id)
+        .await
+        .map(|predictions| {
+            predictions
+                .into_iter()
+                .map(|prediction| AdvancedPrediction {
+                    question_id: prediction.question_id,
+                    value: prediction.value,
+                    submitted_at: prediction.submitted_at,
+                })
+                .collect()
+        })
+}
+
 /// Settles one pending attempt once. The provider is called once per
 /// resolution. Validation happens before the DB transaction, and the DB-02
 /// transaction then performs the server-side score, Elo update, immutable

@@ -15,6 +15,7 @@ import type { AuthStatus, AuthUser } from "../features/authentication/types";
 type AuthContextValue = {
   status: AuthStatus;
   user: AuthUser | null;
+  bootstrapError: string | null;
   error: string | null;
   login: (input: { email: string; password: string }) => Promise<AuthUser>;
   register: (input: {
@@ -32,6 +33,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -39,17 +41,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const current = await authApi.getCurrentUser();
       setUser(current);
       setStatus("authenticated");
+      setBootstrapError(null);
       setError(null);
       return current;
     } catch (requestError) {
       setUser(null);
       setStatus("signed_out");
       if (requestError instanceof AuthApiError && requestError.status === 401) {
+        setBootstrapError(null);
         setError(null);
       } else {
-        setError(
+        setBootstrapError(
           requestError instanceof Error ? requestError.message : "Could not load your session",
         );
+        setError(null);
       }
       return null;
     }
@@ -63,6 +68,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const handleUnauthenticated = () => {
       setUser(null);
       setStatus("signed_out");
+      setBootstrapError(null);
       setError(null);
     };
     window.addEventListener("orion:unauthenticated", handleUnauthenticated);
@@ -73,12 +79,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     () => ({
       status,
       user,
+      bootstrapError,
       error,
       login: async (input) => {
         try {
           const next = await authApi.login(input);
           setUser(next);
           setStatus("authenticated");
+          setBootstrapError(null);
           setError(null);
           return next;
         } catch (requestError) {
@@ -92,6 +100,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
           const next = await authApi.register(input);
           setUser(next);
           setStatus("authenticated");
+          setBootstrapError(null);
           setError(null);
           return next;
         } catch (requestError) {
@@ -105,6 +114,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
           await authApi.logout();
           setUser(null);
           setStatus("signed_out");
+          setBootstrapError(null);
           setError(null);
         } catch (requestError) {
           const message = requestError instanceof Error ? requestError.message : "Logout failed";
@@ -114,7 +124,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       },
       refresh,
     }),
-    [error, refresh, status, user],
+    [bootstrapError, error, refresh, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

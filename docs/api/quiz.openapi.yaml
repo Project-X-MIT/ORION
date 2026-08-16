@@ -36,7 +36,7 @@ paths:
     post:
       operationId: quiz.basic.submit
       summary: Submit Basic Quiz answers
-      description: Score and rating values are derived server-side from the submitted options and authoritative database state.
+      description: Option-shaped Advanced predictions settle immediately through the shared atomic scorer. Numeric predictions are durably accepted as pending and settled later by the provider-backed worker.
       security:
         - sessionCookie: []
       requestBody:
@@ -109,7 +109,7 @@ paths:
               $ref: '#/components/schemas/AdvancedSubmitRequest'
       responses:
         '200':
-          description: Settled Advanced Quiz attempt.
+          description: Accepted Advanced Quiz attempt; numeric submissions may remain pending until worker settlement.
           content:
             application/json:
               schema:
@@ -302,6 +302,9 @@ components:
           type: string
           format: uuid
           description: Compatibility alias for option_id; send one of the two fields.
+        value:
+          type: string
+          description: Exact decimal prediction for a numeric Advanced question. Decimal strings are stored without binary floating-point conversion.
         score:
           $ref: '#/components/schemas/IgnoredClientValue'
         outcome:
@@ -313,6 +316,7 @@ components:
       oneOf:
         - required: [option_id]
         - required: [selected_option_id]
+        - required: [value]
 
     IgnoredClientValue:
       description: Accepted for compatibility but ignored; never used for scoring or rating.
@@ -336,7 +340,7 @@ components:
 
     QuizQuestion:
       type: object
-      required: [id, category, question_text, options]
+      required: [id, category, question_text, input_type, options]
       properties:
         id:
           type: string
@@ -345,6 +349,9 @@ components:
           type: string
         question_text:
           type: string
+        input_type:
+          type: string
+          enum: [mcq, numeric]
         options:
           type: array
           items:
@@ -372,7 +379,7 @@ components:
           format: uuid
         status:
           type: string
-          enum: [completed]
+          enum: [pending, completed]
         total_questions:
           type: integer
           format: int32
