@@ -38,7 +38,8 @@ receiver; the receiver records only alert status, name, owner and runbook.
 
 ```bash
 docker compose -f infra/compose/docker-compose.yml --profile monitoring up -d
-curl --fail http://127.0.0.1:5173/metrics
+docker compose -f infra/compose/docker-compose.yml exec -T api \
+  curl --fail http://127.0.0.1:3000/metrics
 curl --fail http://127.0.0.1:9090/-/ready
 curl --fail http://127.0.0.1:9093/-/ready
 curl --fail http://127.0.0.1:3300/api/health

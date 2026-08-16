@@ -49,7 +49,7 @@ record "compose config validation"
 record "start disposable stack"
 "${compose[@]}" up --build --detach
 wait_ready
-record "metrics=$(curl --silent --show-error --fail "$base_url/metrics" | tr '\n' ' ')"
+record "metrics=$(${compose[@]} exec -T api curl --silent --show-error --fail http://127.0.0.1:3000/metrics | tr '\n' ' ')"
 record "redis=$(docker exec orion-local-redis-1 redis-cli --no-auth-warning -a orion-local-redis ping)"
 
 record "leaderboard load test"

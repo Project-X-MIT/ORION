@@ -24,6 +24,7 @@ use orion_domain::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::time::Duration;
 use thiserror::Error;
 
 use orion_redis::{cache::leaderboard::LeaderboardCache, RedisClient};
@@ -31,6 +32,7 @@ use orion_redis::{cache::leaderboard::LeaderboardCache, RedisClient};
 use crate::{state::AppState, ApiProblem};
 
 const CURSOR_VERSION: u8 = 1;
+const CACHE_COMMAND_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Public leaderboard HTTP routes.
 pub fn router() -> Router<AppState> {
@@ -124,16 +126,20 @@ impl LeaderboardService {
             .map_or(0, LeaderboardCursor::next_offset);
 
         if let Some(cache) = &self.cache {
-            if let Ok(Some(page)) = cache.get(limit, offset).await {
+            // Redis is disposable. Bound both the read and write paths so an
+            // outage cannot consume the API request timeout before the
+            // authoritative PostgreSQL fallback is attempted.
+            if let Ok(Ok(Some(page))) =
+                tokio::time::timeout(CACHE_COMMAND_TIMEOUT, cache.get(limit, offset)).await
+            {
                 return Ok(page);
             }
         }
 
         let page = self.ranks.global_page(limit, cursor).await?;
         if let Some(cache) = &self.cache {
-            // Redis is disposable. A failed refresh must not hide a successful
-            // authoritative read.
-            let _ = cache.put(limit, offset, &page).await;
+            let _ =
+                tokio::time::timeout(CACHE_COMMAND_TIMEOUT, cache.put(limit, offset, &page)).await;
         }
         Ok(page)
     }
