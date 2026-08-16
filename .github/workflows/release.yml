@@ -9,6 +9,8 @@ permissions:
   contents: read
   packages: write
   id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   publish:
@@ -35,7 +37,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          images: ghcr.io/project-x-mit/orion-${{ matrix.name }}
           tags: type=sha,format=long
       - uses: docker/build-push-action@v6
         id: build
@@ -49,8 +51,24 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: actions/attest-build-provenance@v2
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
         with:
-          subject-name: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          image: ghcr.io/project-x-mit/orion-${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+          artifact-name: orion-${{ matrix.name }}-sbom
+          upload-release-assets: false
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/project-x-mit/orion-${{ matrix.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom-${{ matrix.name }}.spdx.json
+          push-to-registry: true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/project-x-mit/orion-${{ matrix.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true

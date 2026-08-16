@@ -24,6 +24,7 @@ Clients branch on stable error codes, not human-readable messages.
 | `research.update` | shivanshrawat13aug2007-commits | `PUT /api/v1/research/{research_id}` | Authenticated |
 | `research.submit` | shivanshrawat13aug2007-commits | `POST /api/v1/research/{research_id}/submission` | Authenticated |
 | `research.review` | shivanshrawat13aug2007-commits | `POST /api/v1/research/{research_id}/reviews` | Reviewer |
+| `research.reviews.get` | shivanshrawat13aug2007-commits | `GET /api/v1/research/{research_id}/reviews` | Author |
 | `research.list_published` | shivanshrawat13aug2007-commits | `GET /api/v1/research` | Public |
 | `research.get` | shivanshrawat13aug2007-commits | `GET /api/v1/research/{research_id}` | Public |
 | `news.list` | sudhanshu001122 | `GET /api/v1/news` | Public |
