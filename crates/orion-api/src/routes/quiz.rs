@@ -12,9 +12,10 @@ use chrono::{DateTime, Utc};
 use orion_common::{ErrorCode, MAX_PAGE_SIZE};
 use orion_db::{
     error::DatabaseError,
-    models::{QuizAnswer, QuizAttempt, QuizQuestionWithOptions, QuizSettlementInput},
+    models::{QuizAnswer, QuizAttempt, QuizQuestionWithOptions, QuizSettlementInput, QuizType},
     repositories::QuizRepository,
 };
+use orion_redis::cache::question::{CachedQuestion, QuestionCache};
 use serde::{
     de::{DeserializeOwned, IgnoredAny},
     Deserialize, Serialize,
@@ -98,6 +99,25 @@ impl From<QuizQuestionWithOptions> for BasicQuestionResponse {
             id: value.question.id,
             category: value.question.category,
             question_text: value.question.question_text,
+            options: value
+                .options
+                .into_iter()
+                .map(|option| BasicOptionResponse {
+                    id: option.id,
+                    option_text: option.option_text,
+                    position: option.position,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<CachedQuestion> for BasicQuestionResponse {
+    fn from(value: CachedQuestion) -> Self {
+        Self {
+            id: value.id,
+            category: value.category,
+            question_text: value.question_text,
             options: value
                 .options
                 .into_iter()
@@ -331,19 +351,35 @@ async fn get_basic_questions(
     let request_id = request_id(&headers);
     let (limit, offset) = pagination(query, request_id)?;
     let repository = QuizRepository::new(state.db);
+    let cache = QuestionCache::new(state.redis);
     let mut questions = repository
-        .basic_questions_with_options(i64::from(limit) + 1, offset)
+        .questions(QuizType::Basic, i64::from(limit) + 1, offset)
         .await
         .map_err(|error| database_problem(error, request_id))?;
     let has_more = questions.len() > usize::try_from(limit).expect("validated page limit fits");
     if has_more {
         questions.pop();
     }
+    let mut cached_questions = Vec::with_capacity(questions.len());
+    for question in questions {
+        let question_id = question.id;
+        let loader_repository = repository.clone();
+        let cached = cache
+            .get_or_load(question_id, move || async move {
+                loader_repository
+                    .question_with_options(question_id)
+                    .await?
+                    .ok_or(sqlx::Error::RowNotFound)
+            })
+            .await
+            .map_err(|error| database_problem(error, request_id))?;
+        cached_questions.push(cached);
+    }
 
     Ok(private_success(
         &headers,
         BasicQuestionsResponse {
-            items: questions
+            items: cached_questions
                 .into_iter()
                 .map(BasicQuestionResponse::from)
                 .collect(),
@@ -363,19 +399,35 @@ async fn get_advanced_questions(
     let request_id = request_id(&headers);
     let (limit, offset) = pagination(query, request_id)?;
     let repository = QuizRepository::new(state.db);
+    let cache = QuestionCache::new(state.redis);
     let mut questions = repository
-        .advanced_questions_with_options(i64::from(limit) + 1, offset)
+        .questions(QuizType::Advanced, i64::from(limit) + 1, offset)
         .await
         .map_err(|error| database_problem(error, request_id))?;
     let has_more = questions.len() > usize::try_from(limit).expect("validated page limit fits");
     if has_more {
         questions.pop();
     }
+    let mut cached_questions = Vec::with_capacity(questions.len());
+    for question in questions {
+        let question_id = question.id;
+        let loader_repository = repository.clone();
+        let cached = cache
+            .get_or_load(question_id, move || async move {
+                loader_repository
+                    .question_with_options(question_id)
+                    .await?
+                    .ok_or(sqlx::Error::RowNotFound)
+            })
+            .await
+            .map_err(|error| database_problem(error, request_id))?;
+        cached_questions.push(cached);
+    }
 
     Ok(private_success(
         &headers,
         BasicQuestionsResponse {
-            items: questions
+            items: cached_questions
                 .into_iter()
                 .map(BasicQuestionResponse::from)
                 .collect(),
@@ -399,6 +451,7 @@ async fn submit_basic_attempt(
         .settle_basic(input)
         .await
         .map_err(|error| submission_database_problem(error, request_id, "Basic"))?;
+    invalidate_question_caches(&state.redis, &result.events).await;
 
     let response = BasicSubmissionResponse {
         attempt: BasicAttemptResponse::from(result.attempt),
@@ -436,6 +489,7 @@ async fn submit_advanced_attempt(
         .settle_advanced(input)
         .await
         .map_err(|error| submission_database_problem(error, request_id, "Advanced"))?;
+    invalidate_question_caches(&state.redis, &result.events).await;
 
     let response = AdvancedSubmissionResponse {
         attempt: BasicAttemptResponse::from(result.attempt),
@@ -458,6 +512,19 @@ async fn submit_advanced_attempt(
     };
 
     Ok(private_success(&headers, response))
+}
+
+/// Cache invalidation is a best-effort post-commit hint. The settlement and
+/// rating rows are already durable in PostgreSQL; a Redis outage therefore
+/// cannot change the response or lose the accepted attempt.
+async fn invalidate_question_caches(
+    redis: &orion_redis::RedisClient,
+    events: &[orion_db::models::RatingEvent],
+) {
+    let cache = QuestionCache::new(redis.clone());
+    for event in events {
+        let _ = cache.invalidate(event.question_id).await;
+    }
 }
 
 async fn get_attempt_result(

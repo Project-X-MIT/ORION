@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use orion_domain::elo::{compute_elo_with_source, EloSourceMetadata, BASIC_ELO_K};
+use orion_domain::{
+    elo::{compute_elo_with_source, EloSourceMetadata, BASIC_ELO_K},
+    quiz::try_advanced_prediction_elo_update,
+};
 use sqlx::{Postgres, Result, Transaction};
 use uuid::Uuid;
 
@@ -16,7 +19,7 @@ pub const PLAYER_ELO_MAX: i32 = 3000;
 pub const QUESTION_ELO_MIN: i32 = 100;
 pub const QUESTION_ELO_MAX: i32 = 2400;
 
-async fn ensure_user_rating(
+pub(crate) async fn ensure_user_rating(
     transaction: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
 ) -> Result<UserRating> {
@@ -45,7 +48,7 @@ async fn ensure_user_rating(
     .await
 }
 
-async fn ensure_question_rating(
+pub(crate) async fn ensure_question_rating(
     transaction: &mut Transaction<'_, Postgres>,
     question_id: Uuid,
 ) -> Result<QuestionRating> {
@@ -75,7 +78,7 @@ async fn ensure_question_rating(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn append_rating_ledger(
+pub(crate) async fn append_rating_ledger(
     transaction: &mut Transaction<'_, Postgres>,
     user_id: Uuid,
     source_type: &str,
@@ -283,6 +286,190 @@ pub async fn apply_rating_change(
     .bind(question_after)
     .bind(effective_user_delta)
     .bind(now)
+    .fetch_one(&mut **transaction)
+    .await
+}
+
+/// Applies one validated Advanced prediction/actual pair inside the caller's
+/// transaction. The domain crate owns the relative-error zone table and Elo
+/// formula; this persistence layer only locks rows, applies the returned
+/// values, and records the immutable audit data.
+pub(crate) async fn apply_advanced_rating_change(
+    transaction: &mut Transaction<'_, Postgres>,
+    attempt_id: Uuid,
+    user_id: Uuid,
+    resolution: &crate::models::AdvancedSettlementResolution,
+    now: DateTime<Utc>,
+) -> Result<RatingEvent> {
+    let user = ensure_user_rating(transaction, user_id).await?;
+    let question = ensure_question_rating(transaction, resolution.prediction.question_id).await?;
+    let elo_result = try_advanced_prediction_elo_update(
+        f64::from(user.rating),
+        f64::from(question.rating),
+        &resolution.prediction,
+        &resolution.actual,
+    )
+    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    let source_type = "quiz_attempt";
+    let outcome_value = if elo_result.sa >= 1.0 { 1_i16 } else { 0_i16 };
+    let user_after = elo_result.elo.player_new_elo as i32;
+    let question_after = elo_result.elo.question_new_elo as i32;
+    let effective_user_delta = user_after - user.rating;
+    let error_pct = elo_result
+        .relative_error_pct
+        .to_string()
+        .parse::<f64>()
+        .unwrap_or(f64::MAX);
+
+    sqlx::query(
+        r#"
+        UPDATE user_ratings
+        SET
+            rating = $2,
+            games_played = games_played + 1,
+            wins = wins + CASE WHEN $3 = 1 THEN 1 ELSE 0 END,
+            losses = losses + CASE WHEN $3 = 0 THEN 1 ELSE 0 END,
+            updated_at = $4
+        WHERE user_id = $1
+        "#,
+    )
+    .bind(user_id)
+    .bind(user_after)
+    .bind(outcome_value)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE question_ratings
+        SET
+            rating = $2,
+            attempts = attempts + 1,
+            correct_answers = correct_answers + $3,
+            updated_at = $4
+        WHERE question_id = $1
+        "#,
+    )
+    .bind(resolution.prediction.question_id)
+    .bind(question_after)
+    .bind(i32::from(outcome_value))
+    .bind(now)
+    .execute(&mut **transaction)
+    .await?;
+
+    append_rating_ledger(
+        transaction,
+        user_id,
+        source_type,
+        attempt_id,
+        &resolution.prediction.question_id.to_string(),
+        user.rating,
+        user_after,
+        now,
+    )
+    .await?;
+
+    sqlx::query_as::<_, RatingEvent>(
+        r#"
+        INSERT INTO rating_events (
+            id,
+            attempt_id,
+            user_id,
+            question_id,
+            source_type,
+            source_id,
+            quiz_type,
+            outcome,
+            correct,
+            zone,
+            error_pct,
+            k,
+            sa,
+            point_delta,
+            user_rating_before,
+            user_rating_after,
+            player_elo_before,
+            player_elo_after,
+            question_rating_before,
+            question_rating_after,
+            question_elo_before,
+            question_elo_after,
+            rating_delta,
+            created_at,
+            advanced_prediction_value,
+            advanced_actual_value,
+            advanced_actual_observed_at,
+            advanced_actual_available_at,
+            advanced_actual_source_id,
+            advanced_actual_source_version,
+            advanced_relative_error_pct,
+            elo_policy_version
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+            $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+            $25, $26, $27, $28, $29, $30, $31, $32
+        )
+        RETURNING
+            id,
+            attempt_id,
+            user_id,
+            question_id,
+            source_type,
+            source_id,
+            quiz_type,
+            outcome,
+            correct,
+            zone,
+            error_pct,
+            k,
+            sa,
+            point_delta,
+            user_rating_before,
+            user_rating_after,
+            player_elo_before,
+            player_elo_after,
+            question_rating_before,
+            question_rating_after,
+            question_elo_before,
+            question_elo_after,
+            rating_delta,
+            created_at
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(attempt_id)
+    .bind(user_id)
+    .bind(resolution.prediction.question_id)
+    .bind(source_type)
+    .bind(attempt_id)
+    .bind("advanced")
+    .bind(outcome_value)
+    .bind(outcome_value == 1)
+    .bind(elo_result.zone.to_string())
+    .bind(error_pct)
+    .bind(elo_result.k.round() as i32)
+    .bind(elo_result.sa)
+    .bind(elo_result.elo.rounded_delta)
+    .bind(user.rating)
+    .bind(user_after)
+    .bind(user.rating)
+    .bind(user_after)
+    .bind(question.rating)
+    .bind(question_after)
+    .bind(question.rating)
+    .bind(question_after)
+    .bind(effective_user_delta)
+    .bind(now)
+    .bind(resolution.prediction.value)
+    .bind(resolution.actual.value)
+    .bind(resolution.actual.observed_at)
+    .bind(resolution.actual.available_at)
+    .bind(&resolution.actual.source_id)
+    .bind(&resolution.actual.source_version)
+    .bind(elo_result.relative_error_pct)
+    .bind(elo_result.policy_version as i32)
     .fetch_one(&mut **transaction)
     .await
 }
