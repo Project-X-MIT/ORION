@@ -68,8 +68,12 @@ ORION_SMTP_USERNAME=staging-sender@example.com
 ORION_SMTP_PASSWORD=<provider app password>
 ORION_SMTP_REQUIRE_TLS=true
 ORION_ALERT_EMAIL_TO=shauryabijalwan@gmail.com
-docker compose -f infra/compose/docker-compose.yml --profile monitoring up -d
+docker compose --env-file .env -f infra/compose/docker-compose.yml --profile monitoring up -d
 ```
+
+The explicit `--env-file .env` is required because the Compose file lives under
+`infra/compose/` while the protected environment file is kept at the repository
+root.
 
 Alertmanager sends firing and resolved notifications to the webhook receiver;
 the receiver forwards the same allow-listed alert summary by SMTP when the
