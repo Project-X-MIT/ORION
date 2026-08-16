@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 use orion_db::{
     pool,
     queries::outbox::{claim_batch, fail, replay},
-    transactions::write_outbox_event,
+    transactions::{write_outbox_event, write_outbox_event_with_context},
 };
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
@@ -114,6 +114,29 @@ async fn outbox_write_is_transactional_and_serializes_generic_payloads() {
     assert_eq!(event.1["body"], "ready");
     assert_eq!(event.2, "pending");
     assert_eq!(event.3, 0);
+
+    let request_id = Uuid::new_v4();
+    let mut contextual = database.pool.begin().await.expect("begin context test");
+    let contextual_id = write_outbox_event_with_context(
+        &mut contextual,
+        "orion.notification.requested",
+        1,
+        serde_json::json!({"recipient_id": Uuid::new_v4()}),
+        Some(request_id),
+        Some("trace-outbox-test"),
+    )
+    .await
+    .expect("write contextual event");
+    contextual.commit().await.expect("commit contextual event");
+    let context = sqlx::query_as::<_, (Option<Uuid>, Option<String>)>(
+        "SELECT request_id, trace_id FROM outbox_events WHERE id = $1",
+    )
+    .bind(contextual_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read contextual event");
+    assert_eq!(context.0, Some(request_id));
+    assert_eq!(context.1.as_deref(), Some("trace-outbox-test"));
 
     database.cleanup().await;
 }

@@ -13,6 +13,15 @@ pub async fn dispatch_once(pool: &PgPool, limit: i64) -> Result<usize> {
     let events = outbox::claim_batch(pool, limit, LEASE_SECONDS).await?;
     let count = events.len();
     for event in events {
+        tracing::info!(
+            target: "orion.outbox",
+            event_id = %event.id,
+            event_type = %event.event_type,
+            request_id = ?event.request_id,
+            trace_id = ?event.trace_id,
+            attempt = event.job_attempts,
+            "dispatching outbox event"
+        );
         let result = dispatch_event(pool, &event.event_type, &event.payload).await;
         match result {
             Ok(()) => {
