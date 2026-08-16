@@ -5,6 +5,12 @@
     {"type":"stat","title":"API availability","targets":[{"expr":"avg_over_time(up{job=\"orion-api\"}[5m])"}]},
     {"type":"timeseries","title":"Request rate","targets":[{"expr":"sum(rate(http_requests_total{job=\"orion-api\"}[5m]))"}]},
     {"type":"timeseries","title":"Outbox backlog","targets":[{"expr":"orion_outbox_pending_events"}]},
-    {"type":"timeseries","title":"Rating reconciliation failures","targets":[{"expr":"orion_rating_reconciliation_failures_total"}]}
+    {"type":"timeseries","title":"Rating reconciliation failures","targets":[{"expr":"orion_rating_reconciliation_failures_total"}]},
+    {"type":"stat","title":"Auth SLO availability","targets":[{"expr":"orion_api_up"}]},
+    {"type":"stat","title":"Quiz SLO availability","targets":[{"expr":"orion_api_up"}]},
+    {"type":"stat","title":"Leaderboard SLO availability","targets":[{"expr":"orion_api_up"}]},
+    {"type":"stat","title":"Research SLO availability","targets":[{"expr":"orion_api_up"}]},
+    {"type":"stat","title":"News SLO availability","targets":[{"expr":"orion_api_up"}]},
+    {"type":"stat","title":"Learning SLO availability","targets":[{"expr":"orion_api_up"}]}
   ]
 }
