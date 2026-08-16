@@ -173,6 +173,33 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/research/{research_id}/reviews:
+    parameters:
+      - $ref: '#/components/parameters/ResearchId'
+    get:
+      operationId: research.reviews.get
+      summary: Read the authenticated author's research feedback
+      description: Returns reviewer decisions without reviewer identities or award bookkeeping. Other callers receive not found.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Review decisions and feedback for the author's paper.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResearchReviewsSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -228,7 +255,7 @@ components:
 
     ResearchPaper:
       type: object
-      required: [id, author_id, title, abstract, content, status, created_at, updated_at]
+      required: [id, author_id, title, abstract, content, status, elo_awarded, created_at, updated_at]
       properties:
         id:
           type: string
@@ -257,6 +284,16 @@ components:
         published_at:
           type: [string, 'null']
           format: date-time
+        elo_award:
+          type: [integer, 'null']
+          description: Awarded Elo-point value after publication settlement.
+        elo_awarded:
+          type: boolean
+          description: Whether the publication award has settled.
+        elo_awarded_at:
+          type: [string, 'null']
+          format: date-time
+          description: Time at which the publication award settled.
         created_at:
           type: string
           format: date-time
@@ -271,6 +308,40 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/ResearchPaper'
+
+    ResearchReview:
+      type: object
+      required: [recommendation, reviewed_at]
+      properties:
+        score:
+          type: [number, 'null']
+        recommendation:
+          type: string
+        comments:
+          type: [string, 'null']
+        evaluation:
+          type: [object, 'null']
+          additionalProperties: true
+        reviewed_at:
+          type: string
+          format: date-time
+
+    ResearchReviews:
+      type: object
+      required: [reviews]
+      properties:
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResearchReview'
+
+    ResearchReviewsSuccess:
+      allOf:
+        - $ref: '#/components/schemas/ApiSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ResearchReviews'
 
     ResearchPage:
       type: object

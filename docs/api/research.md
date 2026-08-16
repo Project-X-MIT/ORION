@@ -1,5 +1,14 @@
 # Research API
 
+## Integration dependencies
+
+The research author, reviewer, and public experiences are integration-gated on
+`SHAURYA-01` and `SHAURYA-02` for shared frontend accessibility, form, and UI
+primitives, and on `PHANTOM-02` through `PHANTOM-04` for the authoritative
+research lifecycle contracts. This feature consumes those contracts; it does
+not reimplement shared components, router registration, endpoint registries,
+or server-owned lifecycle transitions.
+
 The machine-readable OpenAPI fragment for these routes is available at
 [research.openapi.yaml](research.openapi.yaml).
 
@@ -102,6 +111,39 @@ paper status to `submitted` and records `submitted_at`. The repository applies
 the state transition conditionally, so stale or repeated submissions cannot
 skip the lifecycle.
 
+### Read review status and feedback
+
+`GET /api/v1/research/{research_id}/reviews`
+
+Requires the owning author's `orion_session` authentication cookie. The
+response contains reviewer decisions for the author's paper without exposing
+reviewer identities or award bookkeeping:
+
+```json
+{
+  "reviews": [
+    {
+      "score": 72,
+      "recommendation": "reject",
+      "comments": "Please clarify the sampling method.",
+      "evaluation": {
+        "overall_score": 72,
+        "recommendation": "reject",
+        "rationale": "The result is promising but the methodology needs clarification.",
+        "strengths": ["Clear research question"],
+        "concerns": ["Sampling method is underspecified"],
+        "evidence": []
+      },
+      "reviewed_at": "<timestamp>"
+    }
+  ]
+}
+```
+
+Authors receive an empty `reviews` array while a submitted or under-review
+paper has not received a decision. Other callers receive the same `404
+NOT_FOUND` response as private paper reads.
+
 ## Public catalogue
 
 ### List published research
@@ -128,6 +170,9 @@ The response data has this shape:
       "under_review_at": "<timestamp>",
       "decided_at": "<timestamp>",
       "published_at": "<timestamp>",
+      "elo_award": 25,
+      "elo_awarded": true,
+      "elo_awarded_at": "<timestamp>",
       "created_at": "<timestamp>",
       "updated_at": "<timestamp>"
     }
@@ -144,8 +189,12 @@ The response data has this shape:
 
 Authentication is optional for published papers. Anonymous requests for draft,
 submitted, under-review, approved, or rejected papers return `404 NOT_FOUND`.
-The response intentionally omits reviewer identities, review payloads, and Elo
-award bookkeeping.
+The response includes the publication timestamp and the completed public award
+result when available. Reviewer identities and review payloads remain private.
+
+Published papers whose award has not settled yet return `elo_awarded: false`,
+`elo_award: null`, and `elo_awarded_at: null`. A completed award returns the
+awarded Elo-point value and the settlement timestamp.
 
 ## Errors
 
