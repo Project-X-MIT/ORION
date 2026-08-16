@@ -5,6 +5,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppEnvironment {
     Development,
+    Staging,
     Test,
     Production,
 }
@@ -13,6 +14,7 @@ impl AppEnvironment {
     fn parse(value: &str) -> Result<Self, ConfigError> {
         match value.trim().to_ascii_lowercase().as_str() {
             "development" | "dev" => Ok(Self::Development),
+            "staging" | "stage" => Ok(Self::Staging),
             "test" => Ok(Self::Test),
             "production" | "prod" => Ok(Self::Production),
             _ => Err(ConfigError::Invalid {
@@ -179,6 +181,10 @@ mod tests {
             AppEnvironment::parse("DEV").unwrap(),
             AppEnvironment::Development
         );
+        assert_eq!(
+            AppEnvironment::parse("stage").unwrap(),
+            AppEnvironment::Staging
+        );
         assert_eq!(AppEnvironment::parse("test").unwrap(), AppEnvironment::Test);
         assert_eq!(
             AppEnvironment::parse("prod").unwrap(),
@@ -188,6 +194,6 @@ mod tests {
 
     #[test]
     fn rejects_unknown_environment() {
-        assert!(AppEnvironment::parse("staging").is_err());
+        assert!(AppEnvironment::parse("sandbox").is_err());
     }
 }

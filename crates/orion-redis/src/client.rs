@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use fred::{
-    interfaces::{KeysInterface, LuaInterface},
-    prelude::{Client, ClientLike, Config, Error as FredError, PerformanceConfig},
+    interfaces::{ClientLike, EventInterface, KeysInterface, LuaInterface, PubsubInterface},
+    prelude::{Client, Config, Error as FredError, PerformanceConfig, ReconnectPolicy},
 };
 use thiserror::Error;
 
@@ -27,7 +27,20 @@ pub struct RedisClient {
 impl RedisClient {
     pub async fn connect(url: &str, timeout: Duration) -> Result<Self, RedisClientError> {
         let config = Config::from_url(url).map_err(|_| RedisClientError::Configuration)?;
-        let client = Client::new(config, Some(PerformanceConfig::default()), None, None);
+        let performance = PerformanceConfig {
+            // Fred intentionally defaults command timeouts to zero (unbounded).
+            // Redis is disposable in ORION, so an unavailable cache must fail
+            // within the caller's configured deadline and allow PostgreSQL
+            // fallback rather than pinning the request forever.
+            default_command_timeout: timeout,
+            ..PerformanceConfig::default()
+        };
+        // Redis is a disposable dependency, but a transient restart should not
+        // require rebuilding every API process. Keep reconnect attempts
+        // bounded per delay while allowing the client to recover indefinitely;
+        // command timeouts still bound each caller's outage latency.
+        let reconnect = ReconnectPolicy::new_exponential(0, 100, 5_000, 2);
+        let client = Client::new(config, Some(performance), None, Some(reconnect));
         tokio::time::timeout(timeout, client.init())
             .await
             .map_err(|_| {
@@ -148,6 +161,40 @@ impl RedisClient {
             .await
             .map_err(RedisClientError::Command)?;
         Ok(deleted == 1)
+    }
+
+    pub(crate) async fn eval_i64(
+        &self,
+        script: &str,
+        keys: Vec<fred::types::Key>,
+        args: Vec<fred::types::Value>,
+    ) -> Result<i64, RedisClientError> {
+        self.inner
+            .eval(script, keys, args)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) async fn publish(
+        &self,
+        channel: &str,
+        payload: String,
+    ) -> Result<i64, RedisClientError> {
+        self.inner
+            .publish(channel, payload)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) async fn subscribe(&self, channel: &str) -> Result<(), RedisClientError> {
+        self.inner
+            .subscribe(channel)
+            .await
+            .map_err(RedisClientError::Command)
+    }
+
+    pub(crate) fn message_rx(&self) -> tokio::sync::broadcast::Receiver<fred::types::Message> {
+        self.inner.message_rx()
     }
 
     pub async fn increment(

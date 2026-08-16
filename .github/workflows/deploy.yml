@@ -1,0 +1,57 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment protected by GitHub reviewers
+        required: true
+        type: choice
+        options: [staging, production]
+      api_image:
+        description: Immutable API image digest (ghcr.io/...@sha256:...)
+        required: true
+        type: string
+      worker_image:
+        description: Immutable worker image digest
+        required: true
+        type: string
+      frontend_image:
+        description: Immutable frontend image digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  gate:
+    name: Validate immutable promotion
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Validate image digests and production configuration
+        env:
+          ORION_API_IMAGE: ${{ inputs.api_image }}
+          ORION_WORKER_IMAGE: ${{ inputs.worker_image }}
+          ORION_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          for image in "$ORION_API_IMAGE" "$ORION_WORKER_IMAGE" "$ORION_FRONTEND_IMAGE"; do
+            [[ "$image" =~ ^ghcr\.io/[^@]+@sha256:[0-9a-f]{64}$ ]] || { echo "not an immutable GHCR digest: $image" >&2; exit 1; }
+          done
+          ORION_API_IMAGE="$ORION_API_IMAGE" \
+          ORION_WORKER_IMAGE="$ORION_WORKER_IMAGE" \
+          ORION_FRONTEND_IMAGE="$ORION_FRONTEND_IMAGE" \
+          DATABASE_URL='postgres://secret@db/orion' \
+          REDIS_URL='redis://secret@redis:6379' \
+          CORS_ALLOWED_ORIGINS='https://orion.example.com' \
+          ORION_DOMAIN='orion.example.com' \
+          docker compose -f infra/compose/docker-compose.prod.yml config --quiet
+      - name: Require external deployment operator
+        run: |
+          echo 'Promotion gate passed. The environment-approved operator must run scripts/migrate.sh and the provider deployment command.'
+          echo 'No artifact is rebuilt at deployment time; rollback reuses the prior approved digests.'

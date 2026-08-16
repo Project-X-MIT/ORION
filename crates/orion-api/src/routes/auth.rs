@@ -8,7 +8,7 @@ use axum::{
     extract::{FromRequestParts, Json, State},
     http::{header, request::Parts, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use email_address::EmailAddress;
@@ -53,6 +53,14 @@ pub struct AuthUserResponse {
 #[derive(Debug, Serialize)]
 struct AuthResponse {
     user: AuthUserResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct AccountExport {
+    user: AuthUserResponse,
+    notification_count: i64,
+    rating_event_count: i64,
+    research_paper_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +136,8 @@ pub fn router() -> Router<AppState> {
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/me", get(me))
+        .route("/export", get(export_account))
+        .route("/account", delete(delete_account))
 }
 
 async fn register(
@@ -269,6 +279,51 @@ async fn me(headers: HeaderMap, user: AuthenticatedUser) -> impl IntoResponse {
             user: response_user(&user.user),
         },
     )
+}
+
+async fn export_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
+) -> Result<impl IntoResponse, ApiProblem> {
+    let counts = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT
+            (SELECT count(*) FROM notifications WHERE user_id = $1),
+            (SELECT count(*) FROM rating_events WHERE user_id = $1),
+            (SELECT count(*) FROM research_papers WHERE author_id = $1)",
+    )
+    .bind(user.user.id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|error| {
+        ApiProblem::from(orion_db::error::DatabaseError::from_sqlx(error))
+            .with_request_id(request_id(&headers))
+    })?;
+    Ok(crate::success(
+        &headers,
+        AccountExport {
+            user: response_user(&user.user),
+            notification_count: counts.0,
+            rating_event_count: counts.1,
+            research_paper_count: counts.2,
+        },
+    ))
+}
+
+async fn delete_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
+) -> Result<Response, ApiProblem> {
+    let request_id = request_id(&headers);
+    UserRepository::new(state.db.clone())
+        .anonymize(user.user.id)
+        .await
+        .map_err(|error| ApiProblem::from(error).with_request_id(request_id))?;
+    if let Some(session_id) = session_id_from_headers(&headers) {
+        let _ = state.sessions.revoke(session_id).await;
+    }
+    Ok(crate::success(&headers, serde_json::json!({ "deleted": true })).into_response())
 }
 
 fn response_user(user: &User) -> AuthUserResponse {

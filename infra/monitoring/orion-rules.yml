@@ -1,0 +1,21 @@
+groups:
+  - name: orion-slo
+    rules:
+      - alert: OrionApiDown
+        expr: up{job="orion-api"} == 0
+        for: 2m
+        labels: { severity: page, owner: platform }
+        annotations:
+          runbook: docs/runbooks/api-degradation.md
+      - alert: OrionWorkerBacklog
+        expr: orion_outbox_pending_events > 100
+        for: 10m
+        labels: { severity: page, owner: platform }
+        annotations:
+          runbook: docs/runbooks/worker-backlog.md
+      - alert: OrionRatingReconciliation
+        expr: orion_rating_reconciliation_failures_total > 0
+        for: 5m
+        labels: { severity: page, owner: data }
+        annotations:
+          runbook: docs/runbooks/rating-reconciliation.md

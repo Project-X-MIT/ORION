@@ -4,20 +4,22 @@ use std::{
 };
 
 use axum::http::HeaderMap;
-use orion_redis::{RedisClient, RedisClientError};
+use orion_redis::{RedisClient, RedisClientError, RedisKey, RedisRateLimiter};
 
 const WINDOW_SECONDS: i64 = 900;
 const MAX_ATTEMPTS: i64 = 10;
 
 #[derive(Clone)]
 pub struct LoginRateLimiter {
-    redis: RedisClient,
+    limiter: RedisRateLimiter,
 }
 
 impl LoginRateLimiter {
     #[must_use]
     pub const fn new(redis: RedisClient) -> Self {
-        Self { redis }
+        Self {
+            limiter: RedisRateLimiter::new(redis),
+        }
     }
 
     pub async fn allow(
@@ -33,11 +35,16 @@ impl LoginRateLimiter {
         let mut hasher = DefaultHasher::new();
         address.hash(&mut hasher);
         normalized_email.hash(&mut hasher);
-        let key = format!("orion:v1:rate_limit:login:{:016x}", hasher.finish());
-        let count = self.redis.increment(&key).await?;
-        if count == 1 {
-            self.redis.expire(&key, WINDOW_SECONDS).await?;
-        }
-        Ok(count <= MAX_ATTEMPTS)
+        let key = RedisKey::LoginRateLimit {
+            subject_hash: format!("{:016x}", hasher.finish()),
+        };
+        self.limiter
+            .check(
+                key.to_string(),
+                MAX_ATTEMPTS as u64,
+                std::time::Duration::from_secs(WINDOW_SECONDS as u64),
+            )
+            .await
+            .map(|decision| decision.allowed)
     }
 }

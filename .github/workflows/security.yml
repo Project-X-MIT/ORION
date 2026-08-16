@@ -1,0 +1,53 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, "Shaurya's-Branch"]
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-and-secret-scan:
+    name: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Scan repository for credential-shaped material
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|-----BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY-----)' -- . ':!frontend/package-lock.json'; then
+            echo 'credential-shaped material detected in tracked files' >&2
+            exit 1
+          fi
+      - name: Audit Rust dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - name: Audit frontend dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm audit --workspace frontend --audit-level=high
+      - name: Generate dependency metadata artifact
+        run: cargo metadata --locked --format-version 1 > cargo-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-metadata
+          path: cargo-metadata.json
+          if-no-files-found: error

@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::{
     config::{AppConfig, ConfigError},
     middleware::rate_limit::LoginRateLimiter,
+    websocket::NotificationGateway,
 };
 
 #[derive(Debug, Error)]
@@ -32,6 +33,7 @@ pub struct AppState {
     pub redis: RedisClient,
     pub sessions: RedisSessionStore,
     pub login_limiter: LoginRateLimiter,
+    pub notification_gateway: NotificationGateway,
     ready: Arc<AtomicBool>,
     draining: Arc<AtomicBool>,
 }
@@ -63,6 +65,7 @@ impl AppState {
             redis,
             sessions,
             login_limiter,
+            notification_gateway: NotificationGateway::default(),
             ready: Arc::new(AtomicBool::new(false)),
             draining: Arc::new(AtomicBool::new(false)),
         };
