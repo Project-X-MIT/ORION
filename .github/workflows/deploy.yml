@@ -20,6 +20,22 @@ on:
         description: Immutable frontend image digest
         required: true
         type: string
+      canary_url:
+        description: URL serving the deployed canary through the production edge
+        required: true
+        type: string
+      previous_api_image:
+        description: Previously approved API image digest used by automatic rollback
+        required: true
+        type: string
+      previous_worker_image:
+        description: Previously approved worker image digest used by automatic rollback
+        required: true
+        type: string
+      previous_frontend_image:
+        description: Previously approved frontend image digest used by automatic rollback
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -38,9 +54,12 @@ jobs:
           ORION_API_IMAGE: ${{ inputs.api_image }}
           ORION_WORKER_IMAGE: ${{ inputs.worker_image }}
           ORION_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          PREVIOUS_API_IMAGE: ${{ inputs.previous_api_image }}
+          PREVIOUS_WORKER_IMAGE: ${{ inputs.previous_worker_image }}
+          PREVIOUS_FRONTEND_IMAGE: ${{ inputs.previous_frontend_image }}
         run: |
           set -euo pipefail
-          for image in "$ORION_API_IMAGE" "$ORION_WORKER_IMAGE" "$ORION_FRONTEND_IMAGE"; do
+          for image in "$ORION_API_IMAGE" "$ORION_WORKER_IMAGE" "$ORION_FRONTEND_IMAGE" "$PREVIOUS_API_IMAGE" "$PREVIOUS_WORKER_IMAGE" "$PREVIOUS_FRONTEND_IMAGE"; do
             [[ "$image" =~ ^ghcr\.io/[^@]+@sha256:[0-9a-f]{64}$ ]] || { echo "not an immutable GHCR digest: $image" >&2; exit 1; }
           done
           ORION_API_IMAGE="$ORION_API_IMAGE" \
@@ -51,7 +70,43 @@ jobs:
           CORS_ALLOWED_ORIGINS='https://orion.example.com' \
           ORION_DOMAIN='orion.example.com' \
           docker compose -f infra/compose/docker-compose.prod.yml config --quiet
+      - name: Validate default-off feature flags
+        run: tools/validate-feature-flags.sh
       - name: Require external deployment operator
         run: |
           echo 'Promotion gate passed. The environment-approved operator must run scripts/migrate.sh and the provider deployment command.'
           echo 'No artifact is rebuilt at deployment time; rollback reuses the prior approved digests.'
+
+  canary:
+    name: Canary health gate
+    needs: gate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Probe canary and roll back on health failure
+        env:
+          CANARY_BASE_URL: ${{ inputs.canary_url }}
+          ROLLBACK_HOOK_URL: ${{ secrets.CANARY_ROLLBACK_HOOK_URL }}
+          CANARY_ROLLBACK_TOKEN: ${{ secrets.CANARY_ROLLBACK_TOKEN }}
+          PREVIOUS_API_IMAGE: ${{ inputs.previous_api_image }}
+          PREVIOUS_WORKER_IMAGE: ${{ inputs.previous_worker_image }}
+          PREVIOUS_FRONTEND_IMAGE: ${{ inputs.previous_frontend_image }}
+          CANARY_RECOVERY_TARGET_SECONDS: 30
+        run: tools/canary-gate.sh
+
+  smoke:
+    name: Post-deploy smoke
+    needs: canary
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Verify edge and API health endpoints
+        env:
+          SMOKE_BASE_URL: ${{ inputs.canary_url }}
+        run: tools/post-deploy-smoke.sh
