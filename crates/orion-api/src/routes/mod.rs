@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
         .merge(health::router())
         .merge(metrics::router())
         .nest("/api/v1/auth", auth::router())
+        .nest("/api/v1/leaderboard", leaderboard::router())
         .nest("/api/v1/quiz", quiz::router())
         .nest("/api/v1/notifications", notification::router())
         .nest("/api/v1/research", research::router())
