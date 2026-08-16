@@ -17,7 +17,13 @@ are not duplicated here.
 | --- | --- | --- | --- | --- |
 | `research_review` | divi912 | shivanshrawat13aug2007-commits | `orion_worker::jobs::research_review::process_research_award` | `orion.research.elo_award.requested` |
 | `notification` | divi912 | divi912 | `orion_worker::jobs::notification::process_notification` | `orion.notification.requested` |
+| `leaderboard_snapshot` | divi912 | ShauryaBijalwan | `orion_worker::jobs::leaderboard_snapshot::run_leaderboard_snapshot` | hourly `orion.leaderboard.snapshot.scheduled` |
 | `advanced_settlement` | divi912 | akaidk | `orion_worker::jobs::advanced_settlement::process_advanced_submission_event` | `orion.quiz.advanced.submitted` |
+
+The leaderboard body is implemented and tested in this change; Div owns the
+runtime schedule registration and must connect the hourly trigger after merge.
+Until that registration lands, the body is safe to invoke manually for a
+deterministic UTC-hour window.
 
 Worker runtime semantics—claims, retries, dead-letter handling, shutdown, and
 observability—are shared execution concerns. The Phantom body owns research
