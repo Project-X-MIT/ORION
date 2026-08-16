@@ -19,7 +19,7 @@ pub use learning::{
 pub use news::{NewsArticle, NewsFeedArticle, NewsIngestionRun, NewsSource};
 pub use notification::{NewNotification, Notification};
 pub use outbox::{OutboxEvent, OutboxJobStatus};
-pub use profile::{Profile, ProfileStatistics};
+pub use profile::{Profile, ProfilePerformanceRow, ProfileStatistics, PublishedProfileResearchRow};
 pub use quiz_attempt::{
     AdvancedPredictionRecord, AdvancedPredictionSubmission, AdvancedPredictionSubmissionInput,
     AdvancedSettlementInput, AdvancedSettlementResolution, AdvancedSubmissionResult,
