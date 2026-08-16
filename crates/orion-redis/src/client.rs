@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use fred::{
     interfaces::{ClientLike, EventInterface, KeysInterface, LuaInterface, PubsubInterface},
-    prelude::{Client, Config, Error as FredError, PerformanceConfig},
+    prelude::{Client, Config, Error as FredError, PerformanceConfig, ReconnectPolicy},
 };
 use thiserror::Error;
 
@@ -35,7 +35,12 @@ impl RedisClient {
             default_command_timeout: timeout,
             ..PerformanceConfig::default()
         };
-        let client = Client::new(config, Some(performance), None, None);
+        // Redis is a disposable dependency, but a transient restart should not
+        // require rebuilding every API process. Keep reconnect attempts
+        // bounded per delay while allowing the client to recover indefinitely;
+        // command timeouts still bound each caller's outage latency.
+        let reconnect = ReconnectPolicy::new_exponential(0, 100, 5_000, 2);
+        let client = Client::new(config, Some(performance), None, Some(reconnect));
         tokio::time::timeout(timeout, client.init())
             .await
             .map_err(|_| {
