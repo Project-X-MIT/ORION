@@ -34,6 +34,28 @@ pub struct NewsArticle {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Public feed row assembled from an article and its configured source.
+/// Internal ingestion identifiers and timestamps stay out of this projection.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct NewsFeedArticle {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub source_name: String,
+    pub source_slug: String,
+    /// Registered source URL used by the API to enforce outbound host policy.
+    /// This field is internal and is not serialized in the public response.
+    pub source_url: Option<String>,
+    pub title: String,
+    pub summary: String,
+    pub content: String,
+    pub url: String,
+    pub image_url: Option<String>,
+    pub author: Option<String>,
+    pub category: Option<String>,
+    pub symbols: Vec<String>,
+    pub published_at: DateTime<Utc>,
+}
+
 /// One attempt to fetch and normalize articles from a source.
 #[derive(Debug, Clone, PartialEq, Eq, FromRow)]
 pub struct NewsIngestionRun {

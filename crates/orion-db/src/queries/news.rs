@@ -1,7 +1,36 @@
 use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
-use crate::models::NewsArticle;
+use crate::models::{NewsArticle, NewsFeedArticle};
+
+const NEWS_FEED_ARTICLES: &str = r#"
+    SELECT article.id,
+           article.source_id,
+           source.name AS source_name,
+           source.slug AS source_slug,
+           source.source_url,
+           article.title,
+           article.summary,
+           article.content,
+           article.url,
+           article.image_url,
+           article.author,
+           article.category,
+           article.symbols,
+           article.published_at
+    FROM news_articles AS article
+    INNER JOIN news_sources AS source ON source.id = article.source_id
+    WHERE ($3::text IS NULL OR article.category = $3)
+      AND ($4::text IS NULL OR $4 = ANY(article.symbols))
+      AND ($5::uuid IS NULL OR article.source_id = $5)
+      AND (
+          $6::timestamptz IS NULL
+          OR $7::uuid IS NULL
+          OR (article.published_at, article.id) < ($6, $7)
+      )
+    ORDER BY article.published_at DESC, article.id DESC
+    LIMIT $1 OFFSET $2
+"#;
 
 const LATEST_ARTICLES: &str = r#"
     SELECT id, source_id, external_id, title, summary, content, url,
@@ -119,6 +148,54 @@ pub async fn latest_news(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<N
     sqlx::query_as::<_, NewsArticle>(LATEST_ARTICLES)
         .bind(limit)
         .bind(offset)
+        .fetch_all(pool)
+        .await
+}
+
+/// Returns public feed rows with stable source attribution and ordering.
+pub async fn latest_feed(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<NewsFeedArticle>> {
+    latest_feed_filtered(
+        pool,
+        limit,
+        offset,
+        NewsFeedFilters {
+            category: None,
+            symbol: None,
+            source_id: None,
+            cursor_published_at: None,
+            cursor_id: None,
+        },
+    )
+    .await
+}
+
+/// Optional approved filters and the exclusive cursor for a feed page.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NewsFeedFilters<'a> {
+    pub category: Option<&'a str>,
+    pub symbol: Option<&'a str>,
+    pub source_id: Option<Uuid>,
+    pub cursor_published_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub cursor_id: Option<Uuid>,
+}
+
+/// Returns a deterministic feed page after the optional cursor and filters.
+/// The cursor is exclusive and follows the `(published_at DESC, id DESC)`
+/// ordering used by the query.
+pub async fn latest_feed_filtered(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+    filters: NewsFeedFilters<'_>,
+) -> Result<Vec<NewsFeedArticle>> {
+    sqlx::query_as::<_, NewsFeedArticle>(NEWS_FEED_ARTICLES)
+        .bind(limit)
+        .bind(offset)
+        .bind(filters.category)
+        .bind(filters.symbol)
+        .bind(filters.source_id)
+        .bind(filters.cursor_published_at)
+        .bind(filters.cursor_id)
         .fetch_all(pool)
         .await
 }

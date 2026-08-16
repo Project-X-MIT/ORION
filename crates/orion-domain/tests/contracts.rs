@@ -18,8 +18,8 @@ fn occurred_at() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-fn normalized_fixture(fixture: &str) -> String {
-    fixture.replace("\r\n", "\n")
+fn normalize_fixture_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 #[test]
@@ -39,11 +39,12 @@ fn versioned_events_match_golden_fixtures() {
         },
     );
     assert_eq!(
-        serde_json::to_string_pretty(&rating).expect("serialize rating event"),
-        normalized_fixture(include_str!(
-            "../../../docs/contracts/fixtures/rating_updated_v1.json"
-        ))
-        .trim_end()
+        normalize_fixture_newlines(
+            &serde_json::to_string_pretty(&rating).expect("serialize rating event"),
+        ),
+        normalize_fixture_newlines(
+            include_str!("../../../docs/contracts/fixtures/rating_updated_v1.json").trim_end(),
+        )
     );
 
     let notification = EventEnvelope::new(
@@ -63,11 +64,13 @@ fn versioned_events_match_golden_fixtures() {
         },
     );
     assert_eq!(
-        serde_json::to_string_pretty(&notification).expect("serialize notification event"),
-        normalized_fixture(include_str!(
-            "../../../docs/contracts/fixtures/notification_requested_v1.json"
-        ))
-        .trim_end()
+        normalize_fixture_newlines(
+            &serde_json::to_string_pretty(&notification).expect("serialize notification event"),
+        ),
+        normalize_fixture_newlines(
+            include_str!("../../../docs/contracts/fixtures/notification_requested_v1.json")
+                .trim_end(),
+        )
     );
 }
 
