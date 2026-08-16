@@ -504,6 +504,7 @@ async fn ensure_outbox_events(
         .collect::<Vec<_>>();
 
     let settlement_payload = json!({
+        "schema_version": ADVANCED_SETTLEMENT_SCHEMA_VERSION,
         "dedupe_key": dedupe_key,
         "attempt_id": attempt_id,
         "user_id": result.attempt.user_id,
@@ -512,13 +513,16 @@ async fn ensure_outbox_events(
         "events": rating_events,
     });
     let cache_payload = json!({
+        "schema_version": ADVANCED_SETTLEMENT_SCHEMA_VERSION,
         "dedupe_key": format!("{dedupe_key}:cache"),
         "attempt_id": attempt_id,
         "user_id": result.attempt.user_id,
         "question_ids": question_ids,
     });
     let notification_payload = json!({
+        "schema_version": ADVANCED_SETTLEMENT_SCHEMA_VERSION,
         "dedupe_key": format!("{dedupe_key}:notification"),
+        "deduplication_key": format!("{dedupe_key}:notification"),
         "notification_id": attempt_id,
         "recipient_id": result.attempt.user_id,
         "kind": "rating_changed",
@@ -585,6 +589,7 @@ async fn ensure_dead_letter(
     error: &AdvancedSettlementError,
 ) -> Result<(), sqlx::Error> {
     let payload = json!({
+        "schema_version": ADVANCED_SETTLEMENT_SCHEMA_VERSION,
         "dedupe_key": format!("advanced-settlement:{0}:dead-letter", context.attempt_id),
         "attempt_id": context.attempt_id,
         "user_id": context.user_id,

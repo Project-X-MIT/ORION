@@ -293,6 +293,31 @@ async fn one_hundred_duplicate_deliveries_create_one_settlement_and_rating_event
     assert_eq!(audit.3, "Win");
     assert_eq!(audit.4, 30);
 
+    let outbox_contracts = sqlx::query_as::<_, (String, i32, serde_json::Value)>(
+        "SELECT event_type, schema_version, payload
+         FROM outbox_events
+         WHERE payload ->> 'attempt_id' = $1
+         ORDER BY event_type",
+    )
+    .bind(pending.id.to_string())
+    .fetch_all(&database.pool)
+    .await
+    .expect("read versioned Advanced outbox contracts");
+    assert_eq!(outbox_contracts.len(), 3);
+    for (_, schema_version, payload) in &outbox_contracts {
+        assert_eq!(*schema_version, 1);
+        assert_eq!(payload["schema_version"], 1);
+        assert!(payload["dedupe_key"].as_str().is_some());
+    }
+    let notification = outbox_contracts
+        .iter()
+        .find(|(event_type, _, _)| event_type == "orion.notification.requested")
+        .expect("Advanced notification outbox event");
+    assert_eq!(
+        notification.2["deduplication_key"],
+        format!("advanced-settlement:{}:notification", pending.id)
+    );
+
     database.cleanup().await;
 }
 
