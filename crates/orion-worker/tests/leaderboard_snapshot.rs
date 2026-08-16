@@ -63,6 +63,18 @@ impl TestDatabase {
                  current_rank BIGINT NOT NULL,
                  rank_movement BIGINT GENERATED ALWAYS AS (previous_rank - current_rank) STORED,
                  PRIMARY KEY (snapshot_at, user_id)
+             );
+             CREATE TABLE outbox_events (
+                 id UUID PRIMARY KEY,
+                 event_type TEXT NOT NULL,
+                 schema_version INTEGER NOT NULL DEFAULT 1,
+                 payload JSONB NOT NULL,
+                 status TEXT NOT NULL DEFAULT 'pending',
+                 dispatched_at TIMESTAMPTZ,
+                 job_status TEXT NOT NULL DEFAULT 'queued',
+                 job_completed_at TIMESTAMPTZ,
+                 lease_until TIMESTAMPTZ,
+                 job_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
              );",
         )
         .await
@@ -112,6 +124,14 @@ async fn concurrent_retry_creates_one_logical_snapshot_and_rebuild_is_stable() {
     let overlap = overlap.unwrap();
 
     assert_eq!(first.inserted_rows + overlap.inserted_rows, 3);
+    let event_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM outbox_events
+         WHERE event_type = 'orion.leaderboard.snapshot.completed'",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(event_count, 1);
     let before: Vec<(Uuid, i64, Option<i64>)> = sqlx::query_as(
         "SELECT user_id, current_rank, previous_rank
          FROM leaderboard_rank_history ORDER BY current_rank",

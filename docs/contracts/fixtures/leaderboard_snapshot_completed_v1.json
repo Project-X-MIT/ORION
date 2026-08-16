@@ -1,0 +1,13 @@
+{
+  "event_id": "4f52494f-4e4c-4800-8000-000000000001",
+  "event_type": "orion.leaderboard.snapshot.completed",
+  "schema_version": 1,
+  "occurred_at": "2026-08-17T10:00:00Z",
+  "producer": "orion-worker",
+  "payload": {
+    "snapshot_id": "4f52494f-4e4c-4800-8000-000000000001",
+    "snapshot_at": "2026-08-17T10:00:00Z",
+    "comparison_snapshot_before": "2026-08-17T09:00:00Z",
+    "inserted_rows": 100000
+  }
+}

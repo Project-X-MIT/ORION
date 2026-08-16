@@ -27,6 +27,12 @@ pub const EVENT_CONTRACTS: &[EventContractSpec] = &[
         current_version: NotificationRequestedV1::SCHEMA_VERSION,
         minimum_supported_version: 1,
     },
+    EventContractSpec {
+        event_type: "orion.leaderboard.snapshot.completed",
+        owner: "ShauryaBijalwan",
+        current_version: 1,
+        minimum_supported_version: 1,
+    },
 ];
 
 #[must_use]

@@ -17,6 +17,22 @@ jobs:
     name: rust
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: orion
+          POSTGRES_PASSWORD: orion
+          POSTGRES_DB: orion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orion -d orion"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ORION_TEST_DATABASE_URL: postgres://orion:orion@127.0.0.1:5432/orion
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +52,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: cargo test -p orion-worker --test leaderboard_snapshot benchmark -- --ignored --nocapture
 
   frontend:
     name: frontend

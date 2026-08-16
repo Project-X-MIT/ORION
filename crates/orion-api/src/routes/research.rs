@@ -593,7 +593,7 @@ async fn list_reviews(
         .find_by_id(research_id)
         .await
         .map_err(|error| database_problem(error, request_id))?;
-    if !paper.is_some_and(|paper| paper.author_id == user.user.id) {
+    if paper.is_none_or(|paper| paper.author_id != user.user.id) {
         return Err(not_found(request_id));
     }
 

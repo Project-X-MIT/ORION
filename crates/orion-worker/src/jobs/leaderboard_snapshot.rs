@@ -7,7 +7,8 @@
 use std::{future::Future, pin::Pin};
 
 use chrono::{DateTime, Duration, Timelike, Utc};
-use orion_db::transactions::snapshot_leaderboard;
+use orion_db::transactions::{ensure_pending_event, mark_event_dispatched, snapshot_leaderboard};
+use orion_domain::events::ensure_event_compatible;
 use orion_redis::{cache::leaderboard::LeaderboardCache, PubSubEnvelope, RedisPublisher};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -52,6 +53,7 @@ impl SnapshotWindow {
 pub struct SnapshotOutcome {
     pub window: SnapshotWindow,
     pub inserted_rows: u64,
+    pub effects_pending: bool,
 }
 
 impl SnapshotOutcome {
@@ -85,15 +87,31 @@ pub async fn run_leaderboard_snapshot<E: SnapshotEffects>(
     effects: &E,
 ) -> Result<SnapshotOutcome, SnapshotJobError> {
     let window = SnapshotWindow::for_scheduled_time(scheduled_for);
+    ensure_event_compatible(SNAPSHOT_EVENT_TYPE, SNAPSHOT_EVENT_SCHEMA_VERSION)?;
     let inserted_rows = snapshot_leaderboard(pool, window.snapshot_at).await?;
+    let event = SnapshotCompletedV1 {
+        snapshot_id: window.snapshot_id,
+        snapshot_at: window.snapshot_at,
+        comparison_snapshot_before: window.comparison_window_start(),
+        inserted_rows,
+    };
+    let effects_pending = ensure_pending_event(
+        pool,
+        window.snapshot_id,
+        SNAPSHOT_EVENT_TYPE,
+        i32::from(SNAPSHOT_EVENT_SCHEMA_VERSION),
+        &event,
+    )
+    .await?;
     let outcome = SnapshotOutcome {
         window,
         inserted_rows,
+        effects_pending,
     };
 
     // DB-03 returns only after commit. No cache or publication can run before
     // this point, and a duplicate/backdated execution produces no effects.
-    if outcome.changed() {
+    if outcome.effects_pending {
         effects.after_commit(outcome).await?;
     }
     Ok(outcome)
@@ -111,6 +129,7 @@ pub async fn rebuild_snapshot<E: SnapshotEffects>(
 }
 
 pub struct RedisSnapshotEffects<'a> {
+    pub pool: &'a PgPool,
     pub cache: &'a LeaderboardCache,
     pub publisher: &'a RedisPublisher,
 }
@@ -119,7 +138,9 @@ impl SnapshotEffects for RedisSnapshotEffects<'_> {
     fn after_commit(&self, outcome: SnapshotOutcome) -> SnapshotEffectFuture<'_> {
         Box::pin(async move {
             self.cache
-                .after_snapshot_commit(outcome.inserted_rows, &[])
+                // A pending retry is still a committed snapshot effect even
+                // when the snapshot insert itself was an idempotent no-op.
+                .after_snapshot_commit(outcome.inserted_rows.max(1), &[])
                 .await?;
             let event = PubSubEnvelope {
                 event_id: outcome.window.snapshot_id,
@@ -135,6 +156,7 @@ impl SnapshotEffects for RedisSnapshotEffects<'_> {
             self.publisher
                 .publish(SNAPSHOT_EVENT_CHANNEL, &event)
                 .await?;
+            mark_event_dispatched(self.pool, outcome.window.snapshot_id).await?;
             Ok(())
         })
     }
@@ -142,6 +164,8 @@ impl SnapshotEffects for RedisSnapshotEffects<'_> {
 
 #[derive(Debug, Error)]
 pub enum SnapshotJobError {
+    #[error("leaderboard snapshot event contract is incompatible")]
+    Contract(#[from] orion_domain::ContractError),
     #[error("leaderboard snapshot transaction failed")]
     Database(#[from] sqlx::Error),
     #[error("leaderboard cache invalidation failed after commit")]
@@ -203,6 +227,7 @@ mod tests {
         let outcome = SnapshotOutcome {
             window: SnapshotWindow::for_scheduled_time(Utc.timestamp_opt(0, 0).unwrap()),
             inserted_rows: 0,
+            effects_pending: false,
         };
         assert!(!outcome.changed());
     }

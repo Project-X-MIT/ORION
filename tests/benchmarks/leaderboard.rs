@@ -46,3 +46,55 @@ fn identical_sources_rebuild_to_identical_ranks() {
 
     assert_eq!(rank(source.clone()), rank(source));
 }
+
+#[tokio::test]
+#[ignore = "explicit production-sized PostgreSQL benchmark"]
+async fn production_sized_postgres_snapshot_meets_approved_target() {
+    let Some(database) = super::TestDatabase::connect().await else {
+        panic!("ORION_TEST_DATABASE_URL must be configured for the PostgreSQL benchmark");
+    };
+    sqlx::query(
+        "INSERT INTO users (id)
+         SELECT md5(user_number::text)::uuid
+         FROM generate_series(1, 100000) AS users(user_number)
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO user_ratings (user_id, rating)
+         SELECT md5(user_number::text)::uuid,
+                800 + ((user_number * 37) % 1601)
+         FROM generate_series(1, 100000) AS users(user_number)
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE INDEX user_ratings_snapshot_idx ON user_ratings (rating DESC, user_id ASC)",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    let started = Instant::now();
+    sqlx::query(
+        "INSERT INTO leaderboard_rank_history (snapshot_at, user_id, previous_rank, current_rank)
+         SELECT TIMESTAMPTZ '2026-08-17 10:00:00+00', user_id, NULL,
+                ROW_NUMBER() OVER (ORDER BY rating DESC, user_id ASC)
+         FROM user_ratings
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed.as_millis() <= APPROVED_DURATION_MILLIS,
+        "PostgreSQL 100k-user snapshot took {elapsed:?}, target is {APPROVED_DURATION_MILLIS}ms"
+    );
+    println!("PostgreSQL 100k-user snapshot: {elapsed:?}");
+    database.close().await;
+}
