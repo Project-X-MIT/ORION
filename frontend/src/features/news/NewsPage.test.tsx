@@ -84,7 +84,7 @@ describe("NewsPage states", () => {
       isPending: true,
       isError: false,
       refetch: vi.fn(),
-    } as ReturnType<typeof useNewsFeed>);
+    } as unknown as ReturnType<typeof useNewsFeed>);
 
     const markup = renderToStaticMarkup(<NewsPage />);
     expect(markup).toContain('aria-busy="true"');
@@ -100,7 +100,7 @@ describe("NewsPage states", () => {
       isRefetchError: false,
       isFetching: false,
       refetch: vi.fn(),
-    } as ReturnType<typeof useNewsFeed>);
+    } as unknown as ReturnType<typeof useNewsFeed>);
 
     expect(renderToStaticMarkup(<NewsPage />)).toContain("No news is available right now.");
   });
@@ -111,7 +111,7 @@ describe("NewsPage states", () => {
       isPending: false,
       isError: true,
       refetch: vi.fn(),
-    } as ReturnType<typeof useNewsFeed>);
+    } as unknown as ReturnType<typeof useNewsFeed>);
 
     const markup = renderToStaticMarkup(<NewsPage />);
     expect(markup).toContain("News is temporarily unavailable.");
@@ -128,7 +128,7 @@ describe("NewsPage states", () => {
       isRefetchError: false,
       isFetching: false,
       refetch: vi.fn(),
-    } as ReturnType<typeof useNewsFeed>);
+    } as unknown as ReturnType<typeof useNewsFeed>);
 
     const markup = renderToStaticMarkup(<NewsPage />);
     expect(markup).toContain("News may be stale");
@@ -146,7 +146,7 @@ describe("NewsPage states", () => {
       isRefetchError: true,
       isFetching: false,
       refetch: vi.fn(),
-    } as ReturnType<typeof useNewsFeed>);
+    } as unknown as ReturnType<typeof useNewsFeed>);
 
     const markup = renderToStaticMarkup(<NewsPage />);
     expect(markup).toContain("We could not refresh the latest articles.");

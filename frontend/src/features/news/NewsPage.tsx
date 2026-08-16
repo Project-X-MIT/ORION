@@ -77,17 +77,6 @@ export function NewsPage() {
     );
   }
 
-  if (!feed.data) {
-    return (
-      <main className="news-feed" role="alert">
-        <h1>Market news</h1>
-        <p role="status">No recent articles are available right now.</p>
-        <p>News is temporarily unavailable. Please try again.</p>
-        <button type="button" onClick={() => void feed.refetch()}>Try again</button>
-      </main>
-    );
-  }
-
   const isStale = feed.isStale || feed.isRefetchError;
   const articles = feed.data.items;
   return (
