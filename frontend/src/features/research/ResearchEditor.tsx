@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { LiveRegion } from "../../shared/accessibility/LiveRegion";
-import { VisuallyHidden } from "../../shared/accessibility/VisuallyHidden";
 import { isApiClientError } from "../../shared/api/errors";
-import { Form } from "../../shared/forms/Form";
-import { MarkdownEditor } from "../../shared/forms/MarkdownEditor";
-import { TextField } from "../../shared/forms/TextField";
-import { Alert } from "../../shared/ui/Alert";
-import { Button } from "../../shared/ui/Button";
-import { Modal } from "../../shared/ui/Modal";
+import {
+  Alert,
+  Button,
+  Form,
+  LiveRegion,
+  MarkdownEditor,
+  Modal,
+  TextField,
+  VisuallyHidden,
+} from "./researchPrimitives";
 import {
   useCreateResearchDraft,
   useCreateResearchRevision,

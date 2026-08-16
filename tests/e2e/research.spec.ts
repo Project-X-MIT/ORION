@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 type LifecycleState =
   | "draft"
@@ -105,6 +106,11 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(widths.bodyWidth).toBeLessThanOrEqual(widths.viewportWidth);
 }
 
+async function expectAccessible(page: Page) {
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+}
+
 function readPaperId(value: string | null): string {
   const paperId = value?.trim() ?? "";
   if (!/^[0-9a-f-]{36}$/iu.test(paperId)) {
@@ -174,11 +180,12 @@ test.describe("research lifecycle against the backend", () => {
     await expect(page.locator('[aria-label="Status: Published"]').first()).toHaveCount(0);
   });
 
-  test("keyboard users can operate the editor and submission dialog", async ({ page }) => {
+  test("keyboard users can operate the editor and submission dialog without horizontal overflow", async ({ page }) => {
     if (!fixture) throw new Error("Research E2E fixture was not loaded");
     await signIn(page, fixture.author);
     await page.goto(appUrl("/research"));
     await expectNoHorizontalOverflow(page);
+    await expectAccessible(page);
 
     const title = page.getByLabel("Title");
     const content = page.getByLabel("Paper content");
@@ -198,6 +205,7 @@ test.describe("research lifecycle against the backend", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveAttribute("aria-modal", "true");
     await expectNoHorizontalOverflow(page);
+    await expectAccessible(page);
     const confirmButton = dialog.getByRole("button", { name: "Confirm and submit for review" });
     await expect(confirmButton).toBeFocused();
     await page.keyboard.press("Escape");

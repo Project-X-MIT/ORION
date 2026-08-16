@@ -10,7 +10,10 @@
     "lint": "eslint . --max-warnings 0",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/playwright.mjs test --config playwright.config.ts ../tests/e2e",
+    "test:responsive": "node scripts/playwright.mjs test --config playwright.config.ts ../tests/e2e --grep \"horizontal overflow\"",
+    "test:a11y": "node scripts/playwright.mjs test --config playwright.config.ts ../tests/e2e --grep \"accessibility|screen readers|keyboard\""
   },
   "dependencies": {
     "@tanstack/react-query": "5.59.20",
