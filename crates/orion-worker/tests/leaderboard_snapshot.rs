@@ -26,9 +26,7 @@ struct TestDatabase {
 
 impl TestDatabase {
     async fn connect() -> Option<Self> {
-        let url = env::var("ORION_TEST_DATABASE_URL")
-            .or_else(|_| env::var("DATABASE_URL"))
-            .ok()?;
+        let url = env::var("ORION_LEADERBOARD_TEST_DATABASE_URL").ok()?;
         let schema = format!("orion_snapshot_{}", Uuid::new_v4().simple());
         let options = sqlx::postgres::PgConnectOptions::from_url(&url.parse().ok()?)
             .ok()?
@@ -84,7 +82,7 @@ impl TestDatabase {
 
     async fn close(self) {
         self.pool.close().await;
-        if let Ok(url) = env::var("ORION_TEST_DATABASE_URL").or_else(|_| env::var("DATABASE_URL")) {
+        if let Ok(url) = env::var("ORION_LEADERBOARD_TEST_DATABASE_URL") {
             if let Ok(admin) = PgPoolOptions::new().max_connections(1).connect(&url).await {
                 let _ = admin
                     .execute(format!("DROP SCHEMA {} CASCADE", self.schema).as_str())

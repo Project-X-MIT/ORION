@@ -51,7 +51,9 @@ fn identical_sources_rebuild_to_identical_ranks() {
 #[ignore = "explicit production-sized PostgreSQL benchmark"]
 async fn production_sized_postgres_snapshot_meets_approved_target() {
     let Some(database) = super::TestDatabase::connect().await else {
-        panic!("ORION_TEST_DATABASE_URL must be configured for the PostgreSQL benchmark");
+        panic!(
+            "ORION_LEADERBOARD_TEST_DATABASE_URL must be configured for the PostgreSQL benchmark"
+        );
     };
     sqlx::query(
         "INSERT INTO users (id)

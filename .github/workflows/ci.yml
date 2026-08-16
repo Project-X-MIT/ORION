@@ -32,7 +32,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      ORION_TEST_DATABASE_URL: postgres://orion:orion@127.0.0.1:5432/orion
+      ORION_LEADERBOARD_TEST_DATABASE_URL: postgres://orion:orion@127.0.0.1:5432/orion
     steps:
       - uses: actions/checkout@v4
         with:
