@@ -1,2 +1,10 @@
-/** Temporary SHAURYA-02 placeholder. Replace the re-export target with the canonical shared implementation. */
-export { TextField } from "../placeholderPrimitives";
+import { forwardRef } from "react";
+
+import { Input } from "../ui/Input";
+import type { InputProps } from "../ui/Input";
+
+export type TextFieldProps = InputProps;
+
+export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(props, ref) {
+  return <Input ref={ref} type="text" {...props} />;
+});

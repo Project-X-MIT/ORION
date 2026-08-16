@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        QuizAttempt, QuizQuestion, QuizQuestionWithOptions, QuizSettlementInput,
-        QuizSettlementResult, QuizType,
+        AdvancedPredictionSubmissionInput, AdvancedSubmissionResult, QuizAttempt, QuizQuestion,
+        QuizQuestionWithOptions, QuizSettlementInput, QuizSettlementResult, QuizType,
     },
     queries::{quiz_attempts, quiz_questions, ratings},
     transactions,
@@ -78,6 +78,15 @@ impl QuizRepository {
         input: QuizSettlementInput,
     ) -> Result<QuizSettlementResult> {
         transactions::settle_advanced_quiz(&self.pool, input).await
+    }
+
+    /// Records exact numeric Advanced predictions and leaves settlement to the
+    /// provider-backed worker.
+    pub async fn submit_advanced_predictions(
+        &self,
+        input: AdvancedPredictionSubmissionInput,
+    ) -> Result<AdvancedSubmissionResult> {
+        transactions::submit_advanced_predictions(&self.pool, input).await
     }
 
     /// Returns a completed attempt owned by the authenticated user.

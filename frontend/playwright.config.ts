@@ -1,8 +1,6 @@
-import { defineConfig, devices } from "@playwright/test";
+const baseURL = process.env.RESEARCH_E2E_FRONTEND_URL ?? "http://127.0.0.1:5174";
 
-const baseURL = process.env.RESEARCH_E2E_FRONTEND_URL ?? "http://127.0.0.1:5173";
-
-export default defineConfig({
+export default {
   testDir: "../tests/e2e",
   timeout: 45_000,
   expect: { timeout: 10_000 },
@@ -19,7 +17,7 @@ export default defineConfig({
   webServer: process.env.RESEARCH_E2E_FRONTEND_URL
     ? undefined
     : {
-        command: "node node_modules/vite/bin/vite.js --host 127.0.0.1",
+        command: "node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5174",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
@@ -27,7 +25,10 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        browserName: "chromium",
+        viewport: { width: 1280, height: 720 },
+      },
     },
   ],
-});
+};

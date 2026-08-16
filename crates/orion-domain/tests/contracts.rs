@@ -2,9 +2,10 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use orion_domain::{
-    events::ensure_event_compatible, EventEnvelope, EventId, NotificationId, NotificationKind,
-    NotificationRequestedV1, Rating, RatingEntryId, RatingReason, RatingUpdatedV1, UserId,
-    EVENT_CONTRACTS,
+    events::ensure_event_compatible, AdvancedCacheInvalidationRequestedV1, AdvancedRatingEventV1,
+    AdvancedSettlementCompletedV1, AdvancedSettlementDeadLetteredV1, AdvancedSubmissionRequestedV1,
+    EventEnvelope, EventId, NotificationId, NotificationKind, NotificationRequestedV1, Rating,
+    RatingEntryId, RatingReason, RatingUpdatedV1, UserId, EVENT_CONTRACTS,
 };
 use uuid::Uuid;
 
@@ -71,6 +72,102 @@ fn versioned_events_match_golden_fixtures() {
             include_str!("../../../docs/contracts/fixtures/notification_requested_v1.json")
                 .trim_end(),
         )
+    );
+}
+
+#[test]
+fn advanced_events_match_golden_fixtures() {
+    let submitted = EventEnvelope::new(
+        EventId::from_uuid(uuid("00000000-0000-0000-0000-000000000040")),
+        DateTime::parse_from_rfc3339("2026-08-16T12:00:00Z")
+            .expect("valid fixture timestamp")
+            .with_timezone(&Utc),
+        "orion-api",
+        AdvancedSubmissionRequestedV1 {
+            attempt_id: uuid("00000000-0000-0000-0000-000000000041"),
+            user_id: uuid("00000000-0000-0000-0000-000000000042"),
+            question_ids: vec![uuid("00000000-0000-0000-0000-000000000043")],
+            dedupe_key: "advanced-submission:00000000-0000-0000-0000-000000000041".to_owned(),
+        },
+    );
+    assert_fixture(&submitted, "advanced_submitted_v1.json");
+
+    let settled = EventEnvelope::new(
+        EventId::from_uuid(uuid("00000000-0000-0000-0000-000000000050")),
+        DateTime::parse_from_rfc3339("2026-08-16T12:01:00Z")
+            .expect("valid fixture timestamp")
+            .with_timezone(&Utc),
+        "orion-worker",
+        AdvancedSettlementCompletedV1 {
+            attempt_id: uuid("00000000-0000-0000-0000-000000000041"),
+            user_id: uuid("00000000-0000-0000-0000-000000000042"),
+            status: "completed".to_owned(),
+            rating_after: 1530,
+            events: vec![AdvancedRatingEventV1 {
+                event_id: uuid("00000000-0000-0000-0000-000000000051"),
+                question_id: uuid("00000000-0000-0000-0000-000000000043"),
+                correct: true,
+                rating_delta: 30,
+            }],
+            dedupe_key: "advanced-settlement:00000000-0000-0000-0000-000000000041".to_owned(),
+        },
+    );
+    assert_fixture(&settled, "advanced_settled_v1.json");
+
+    let cache = EventEnvelope::new(
+        EventId::from_uuid(uuid("00000000-0000-0000-0000-000000000060")),
+        DateTime::parse_from_rfc3339("2026-08-16T12:01:00Z")
+            .expect("valid fixture timestamp")
+            .with_timezone(&Utc),
+        "orion-worker",
+        AdvancedCacheInvalidationRequestedV1 {
+            attempt_id: uuid("00000000-0000-0000-0000-000000000041"),
+            user_id: uuid("00000000-0000-0000-0000-000000000042"),
+            question_ids: vec![uuid("00000000-0000-0000-0000-000000000043")],
+            dedupe_key: "advanced-settlement:00000000-0000-0000-0000-000000000041:cache".to_owned(),
+        },
+    );
+    assert_fixture(&cache, "advanced_cache_invalidate_v1.json");
+
+    let dead_lettered = EventEnvelope::new(
+        EventId::from_uuid(uuid("00000000-0000-0000-0000-000000000070")),
+        DateTime::parse_from_rfc3339("2026-08-16T12:05:00Z")
+            .expect("valid fixture timestamp")
+            .with_timezone(&Utc),
+        "orion-worker",
+        AdvancedSettlementDeadLetteredV1 {
+            attempt_id: uuid("00000000-0000-0000-0000-000000000041"),
+            user_id: uuid("00000000-0000-0000-0000-000000000042"),
+            reason: "provider_terminal_failure".to_owned(),
+            dedupe_key: "advanced-settlement:00000000-0000-0000-0000-000000000041:dead-letter"
+                .to_owned(),
+        },
+    );
+    assert_fixture(&dead_lettered, "advanced_dead_lettered_v1.json");
+}
+
+fn assert_fixture<T: serde::Serialize>(event: &EventEnvelope<T>, filename: &str) {
+    let fixture = match filename {
+        "advanced_submitted_v1.json" => {
+            include_str!("../../../docs/contracts/fixtures/advanced_submitted_v1.json")
+        }
+        "advanced_settled_v1.json" => {
+            include_str!("../../../docs/contracts/fixtures/advanced_settled_v1.json")
+        }
+        "advanced_cache_invalidate_v1.json" => {
+            include_str!("../../../docs/contracts/fixtures/advanced_cache_invalidate_v1.json")
+        }
+        "advanced_dead_lettered_v1.json" => {
+            include_str!("../../../docs/contracts/fixtures/advanced_dead_lettered_v1.json")
+        }
+        _ => panic!("unknown Advanced event fixture {filename}"),
+    };
+    assert_eq!(
+        normalize_fixture_newlines(
+            &serde_json::to_string_pretty(event).expect("serialize event fixture"),
+        ),
+        normalize_fixture_newlines(fixture.trim_end()),
+        "fixture {filename} does not match the serialized contract"
     );
 }
 

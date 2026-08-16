@@ -19,7 +19,6 @@ The notification payload includes both `dedupe_key` for outbox insertion and
 secret or actual-value payload; provider facts remain in PostgreSQL rating
 audit columns.
 
-These feature-owned event types still require Div to add shared domain
-registry entries, typed fixtures, and consumer routing before they are treated
-as public cross-feature contracts. Until then, the PostgreSQL outbox row is
-the durable handoff and Redis/Pub/Sub remains only an optional hint.
+The shared domain registry, versioned payload types, fixtures, and typed
+consumer routing are kept in sync with this table. The PostgreSQL outbox row
+is the durable handoff and Redis/Pub/Sub remains only an optional hint.

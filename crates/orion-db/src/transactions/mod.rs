@@ -1,4 +1,5 @@
 pub mod advanced_settlement;
+pub mod advanced_submission;
 pub mod basic_settlement;
 pub mod event_consumer;
 pub mod leaderboard_snapshot;
@@ -18,6 +19,9 @@ pub use outbox::{
 
 pub use advanced_settlement::{
     settle_advanced_actual_quiz, settle_advanced_attempt, settle_advanced_quiz,
+};
+pub use advanced_submission::{
+    submit_advanced_predictions, ADVANCED_SUBMISSION_SCHEMA_VERSION, ADVANCED_SUBMITTED_EVENT_TYPE,
 };
 pub use basic_settlement::{settle_basic_attempt, settle_basic_quiz};
 pub use event_consumer::{

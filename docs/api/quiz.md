@@ -29,6 +29,7 @@ stable database order:
       "id": "<question-uuid>",
       "category": "science",
       "question_text": "What is the chemical symbol for water?",
+      "input_type": "mcq",
       "options": [
         {
           "id": "<option-uuid>",
@@ -133,7 +134,9 @@ options; explanations, answer keys, and internal ratings are omitted.
 
 `POST /api/v1/quiz/advanced/attempts`
 
-Advanced predictions currently use the option-based DB-02 question contract:
+Advanced predictions support both option-shaped and exact numeric questions.
+Numeric questions are returned with `input_type: "numeric"` and an empty
+`options` array:
 
 ```json
 {
@@ -150,21 +153,15 @@ Advanced predictions currently use the option-based DB-02 question contract:
 `answers` is accepted as a compatibility alias for `predictions`, and
 `selected_option_id` is accepted as an alias for `option_id`. The same
 validation, authentication, timestamp, duplicate-attempt, and maximum-size
-rules apply as for Basic submissions. The Advanced settlement transaction
-verifies the question and option type, commits the completed attempt and
-shared user/question rating update atomically, and returns the settled attempt,
-current rating, and per-prediction result under the `predictions` response
-field. Client-supplied `score`, `outcome`, `delta`, or `rating` fields are
-ignored and never used for settlement.
-
-The public HTTP Advanced endpoint remains the DB-02-compatible option-shaped
-contract above. Numeric market-value prediction resolution is a worker-owned
-settlement path: after the provider returns a validated final actual, the
-worker uses the forward-only `202608160001_advanced_actual_settlement.sql`
-migration and the shared atomic PostgreSQL scorer to persist the provider
-facts. Public actual-value ingestion, calendar configuration, and provider
-allowlisting still require the approved source contract described in ADR 0005;
-the local ADR remains Proposed until that approval is recorded.
+rules apply as for Basic submissions. Option predictions verify the question
+and option type, then commit the completed attempt and shared user/question
+rating update atomically. Numeric predictions are parsed as exact decimal
+strings, validated against active Advanced questions with no options, written
+to PostgreSQL `NUMERIC(38,18)`, and returned with `status: "pending"`. The
+worker later obtains and validates the provider actual, then uses the existing
+shared atomic scorer and `202608160001_advanced_actual_settlement.sql` to
+complete the attempt. Client-supplied `score`, `outcome`, `delta`, or `rating`
+fields are ignored and never used for settlement.
 
 ## Attempt/result retrieval
 

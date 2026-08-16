@@ -13,13 +13,15 @@ use orion_db::{
     pool,
     queries::quiz_attempts::{create_pending, find_by_id},
 };
+use orion_domain::AdvancedSubmissionRequestedV1;
 use orion_worker::{
     jobs::advanced_settlement::{
-        settle_pending_advanced_attempt, settle_pending_advanced_attempt_with_hooks,
-        settle_pending_advanced_with_retry, ActualFuture, ActualProviderError,
-        AdvancedActualProvider, AdvancedAttemptContext, AdvancedPrediction, AdvancedQuestion,
-        AdvancedResolution, AdvancedSettlementBoundary, AdvancedSettlementError,
-        AdvancedSettlementHooks, ResolvedActual,
+        process_advanced_submission_event, settle_pending_advanced_attempt,
+        settle_pending_advanced_attempt_with_hooks, settle_pending_advanced_with_retry,
+        ActualFuture, ActualProviderError, AdvancedActualProvider, AdvancedAttemptContext,
+        AdvancedPrediction, AdvancedQuestion, AdvancedResolution, AdvancedSettlementBoundary,
+        AdvancedSettlementError, AdvancedSettlementHooks, PostgresAdvancedActualProvider,
+        ResolvedActual,
     },
     scheduler::RetryPolicy,
 };
@@ -71,6 +73,7 @@ struct TestDatabase {
     schema: String,
     user_id: Uuid,
     question_id: Uuid,
+    numeric_question_id: Uuid,
 }
 
 impl TestDatabase {
@@ -113,6 +116,7 @@ impl TestDatabase {
 
         let user_id = Uuid::new_v4();
         let question_id = Uuid::new_v4();
+        let numeric_question_id = Uuid::new_v4();
         let option_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO users (id, email, username, password_hash)
@@ -134,6 +138,33 @@ impl TestDatabase {
         .await
         .expect("insert worker test question");
         sqlx::query(
+            "INSERT INTO quiz_questions (id, quiz_type, category, question_text)
+             VALUES ($1, 'advanced', 'test', 'Advanced numeric question')",
+        )
+        .bind(numeric_question_id)
+        .execute(&test_pool)
+        .await
+        .expect("insert worker numeric question");
+        let now = Utc::now();
+        sqlx::query(
+            "UPDATE quiz_questions
+             SET advanced_unit_code = 'price',
+                 advanced_value_scale = 2,
+                 advanced_market_calendar_id = 'test-calendar',
+                 advanced_market_calendar_version = 'v1',
+                 advanced_market_timezone = 'UTC',
+                 advanced_horizon_at = $2,
+                 advanced_expires_at = $3,
+                 advanced_provider_key = 'test-provider'
+             WHERE id = $1",
+        )
+        .bind(numeric_question_id)
+        .bind(now - ChronoDuration::minutes(2))
+        .bind(now + ChronoDuration::minutes(2))
+        .execute(&test_pool)
+        .await
+        .expect("configure worker numeric question");
+        sqlx::query(
             "INSERT INTO quiz_options (id, question_id, option_text, position, is_correct)
              VALUES ($1, $2, 'correct', 0, TRUE)",
         )
@@ -147,6 +178,23 @@ impl TestDatabase {
             .execute(&test_pool)
             .await
             .expect("insert worker question rating");
+        sqlx::query("INSERT INTO question_ratings (question_id) VALUES ($1)")
+            .bind(numeric_question_id)
+            .execute(&test_pool)
+            .await
+            .expect("insert worker numeric question rating");
+        sqlx::query(
+            "INSERT INTO advanced_actual_values
+             (question_id, value, observed_at, available_at, source_id, source_version, is_final)
+             VALUES ($1, $2, $3, $4, 'test-provider', 'test-v1', TRUE)",
+        )
+        .bind(numeric_question_id)
+        .bind(Decimal::new(100, 2))
+        .bind(now - ChronoDuration::minutes(3))
+        .bind(now - ChronoDuration::minutes(1))
+        .execute(&test_pool)
+        .await
+        .expect("insert worker provider handoff");
 
         Some(Self {
             pool: test_pool,
@@ -154,6 +202,7 @@ impl TestDatabase {
             schema,
             user_id,
             question_id,
+            numeric_question_id,
         })
     }
 
@@ -182,6 +231,7 @@ impl TestDatabase {
             value_scale: 2,
             horizon_at: now - ChronoDuration::minutes(2),
             expires_at: now + ChronoDuration::minutes(2),
+            provider_key: "test-provider".to_owned(),
         };
         AdvancedAttemptContext {
             attempt_id,
@@ -214,6 +264,78 @@ impl TestDatabase {
             }),
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn registered_submission_consumer_loads_postgres_facts_and_settles_once() {
+    let Some(database) = TestDatabase::create().await else {
+        return;
+    };
+    let pending = database.pending_attempt().await;
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO advanced_predictions (attempt_id, question_id, value, submitted_at)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(pending.id)
+    .bind(database.numeric_question_id)
+    .bind(Decimal::new(100, 2))
+    .bind(now - ChronoDuration::minutes(3))
+    .execute(&database.pool)
+    .await
+    .expect("insert numeric prediction handoff");
+
+    let payload = serde_json::to_value(AdvancedSubmissionRequestedV1 {
+        attempt_id: pending.id,
+        user_id: database.user_id,
+        question_ids: vec![database.numeric_question_id],
+        dedupe_key: format!("advanced-submission:{}", pending.id),
+    })
+    .expect("serialize typed submission event");
+    sqlx::query(
+        "INSERT INTO outbox_events (event_type, schema_version, payload)
+         VALUES ('orion.quiz.advanced.submitted', 1, $1)",
+    )
+    .bind(sqlx::types::Json(payload))
+    .execute(&database.pool)
+    .await
+    .expect("insert numeric submission event");
+    let event = orion_db::queries::outbox::claim_batch_for_event_type(
+        &database.pool,
+        "orion.quiz.advanced.submitted",
+        1,
+        300,
+    )
+    .await
+    .expect("claim typed Advanced submission event")
+    .into_iter()
+    .next()
+    .expect("claimed Advanced submission event");
+
+    let provider = PostgresAdvancedActualProvider::new(database.pool.clone());
+    let outcome = process_advanced_submission_event(&database.pool, &provider, &event)
+        .await
+        .expect("registered consumer settles from the DB provider handoff");
+    assert!(matches!(
+        outcome,
+        orion_worker::jobs::advanced_settlement::AdvancedSettlementOutcome::Completed(_)
+    ));
+
+    let status: String = sqlx::query_scalar("SELECT status FROM quiz_attempts WHERE id = $1")
+        .bind(pending.id)
+        .fetch_one(&database.pool)
+        .await
+        .expect("read consumer-settled attempt");
+    let rating_events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM rating_events WHERE attempt_id = $1")
+            .bind(pending.id)
+            .fetch_one(&database.pool)
+            .await
+            .expect("count consumer-settled rating events");
+    assert_eq!(status, "completed");
+    assert_eq!(rating_events, 1);
+
+    database.cleanup().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
