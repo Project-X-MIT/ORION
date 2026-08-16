@@ -1,6 +1,14 @@
+use axum::{
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    routing::get,
+    Json, Router,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
+use orion_common::ErrorCode;
 use orion_db::{
+    error::DatabaseError,
     models::{LeaderboardEntry, LeaderboardRankHistory},
     queries::leaderboard::{
         global_leaderboard, latest_rank_movement_by_user_id, rank_history_by_user_id,
@@ -16,11 +24,61 @@ use orion_domain::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::time::Duration;
 use thiserror::Error;
 
 use orion_redis::{cache::leaderboard::LeaderboardCache, RedisClient};
 
+use crate::{state::AppState, ApiProblem};
+
 const CURSOR_VERSION: u8 = 1;
+const CACHE_COMMAND_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Public leaderboard HTTP routes.
+pub fn router() -> Router<AppState> {
+    Router::new().route("/", get(list))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeaderboardQuery {
+    limit: Option<u32>,
+    cursor: Option<String>,
+}
+
+async fn list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<LeaderboardQuery>,
+) -> Result<Json<orion_common::ApiSuccess<LeaderboardPageDto>>, ApiProblem> {
+    let service = LeaderboardService::with_cache(state.db.clone(), state.redis.clone());
+    let page = service
+        .global_page(query.limit.unwrap_or(20), query.cursor.as_deref())
+        .await
+        .map_err(rank_service_problem)?;
+    Ok(crate::success(&headers, page))
+}
+
+fn rank_service_problem(error: RankServiceError) -> ApiProblem {
+    match error {
+        RankServiceError::Validation(
+            LeaderboardValidationError::InvalidLimit(_) | LeaderboardValidationError::InvalidCursor,
+        ) => ApiProblem::new(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::ValidationFailed,
+            "leaderboard query is invalid",
+        ),
+        RankServiceError::Validation(
+            LeaderboardValidationError::InvalidRank(_)
+            | LeaderboardValidationError::InvalidRating(_),
+        ) => ApiProblem::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Internal,
+            "internal server error",
+        ),
+        RankServiceError::Database(error) => ApiProblem::from(DatabaseError::from_sqlx(error)),
+    }
+}
 
 /// Reads authoritative ranks through the completed DB-03 query surface.
 ///
@@ -68,16 +126,20 @@ impl LeaderboardService {
             .map_or(0, LeaderboardCursor::next_offset);
 
         if let Some(cache) = &self.cache {
-            if let Ok(Some(page)) = cache.get(limit, offset).await {
+            // Redis is disposable. Bound both the read and write paths so an
+            // outage cannot consume the API request timeout before the
+            // authoritative PostgreSQL fallback is attempted.
+            if let Ok(Ok(Some(page))) =
+                tokio::time::timeout(CACHE_COMMAND_TIMEOUT, cache.get(limit, offset)).await
+            {
                 return Ok(page);
             }
         }
 
         let page = self.ranks.global_page(limit, cursor).await?;
         if let Some(cache) = &self.cache {
-            // Redis is disposable. A failed refresh must not hide a successful
-            // authoritative read.
-            let _ = cache.put(limit, offset, &page).await;
+            let _ =
+                tokio::time::timeout(CACHE_COMMAND_TIMEOUT, cache.put(limit, offset, &page)).await;
         }
         Ok(page)
     }
