@@ -12,7 +12,7 @@ no production credentials, data, registry promotion, or provider deployment.
 | Canary failure stop/rollback | PASS: readiness HTTP 503 invoked the rollback hook at elapsed 0 seconds; hook acknowledged prior approved digests | `tools/canary-gate.sh` with a local failing canary and rollback fixture |
 | Canary success window | PASS: two healthy probes completed a two-second synthetic window | `CANARY_WINDOW_SECONDS=2 CANARY_INTERVAL_SECONDS=1 tools/canary-gate.sh` |
 | Post-deploy smoke | PASS: `/health/live`, `/health/ready`, and `/` returned HTTP 200 | `tools/post-deploy-smoke.sh` against the local healthy fixture |
-| UAT/accessibility/responsive matrix | PASS: 12 tests across Chromium, Firefox, WebKit, and iPhone-sized Chromium; 40 existing credentialed research tests skipped by design | `npm run test:e2e --workspace frontend` |
+| UAT/accessibility/responsive matrix | PASS: 12 release-gate tests across Chromium, Firefox, WebKit, and iPhone-sized Chromium; unrelated product E2E suites are run by their owning feature checks | `npm run test:e2e --workspace frontend -- --grep "release UAT matrix"` |
 
 The failure-path canary command returned exit status 1 after the rollback hook
 accepted the previous immutable image digests. This is intentional: promotion

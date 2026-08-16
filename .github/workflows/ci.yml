@@ -80,7 +80,7 @@ jobs:
       - name: Install supported browser engines
         run: npx playwright install --with-deps chromium firefox webkit
         working-directory: frontend
-      - run: npm run test:e2e --workspace frontend
+      - run: npm run test:e2e --workspace frontend -- --grep "release UAT matrix"
 
   contracts:
     name: contracts

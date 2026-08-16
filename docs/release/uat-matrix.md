@@ -19,7 +19,7 @@ Run the matrix locally from a disposable checkout:
 npm ci --ignore-scripts
 npm install --no-save --package-lock=false --ignore-scripts @rollup/rollup-linux-x64-gnu@4.62.4
 (cd frontend && npx playwright install chromium firefox webkit)
-npm run test:e2e --workspace frontend
+npm run test:e2e --workspace frontend -- --grep "release UAT matrix"
 ```
 
 The tests mock only the API responses needed for the shell journey and use
