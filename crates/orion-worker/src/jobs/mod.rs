@@ -1,6 +1,7 @@
 pub mod advanced_settlement;
 pub mod cache_rebuild;
 pub mod cleanup;
+pub mod leaderboard_snapshot;
 pub mod news_ingest;
 pub mod notification;
 pub mod outbox_dispatch;
