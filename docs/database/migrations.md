@@ -46,6 +46,18 @@ execution lifecycle beside the existing outbox transport status. The job
 status, attempts, retry schedule, and dead-letter context are indexed for
 operational polling; existing outbox rows remain transport-compatible.
 
+Migration `202608160001_advanced_actual_settlement.sql` is owned by the
+Advanced Quiz feature owner, with Div responsible for merge ordering. It is
+forward-only and adds nullable provider-fact, decimal-error, source-metadata,
+and Elo-policy columns to `rating_events`; it also permits the approved
+neutral-zone `K = 0` and adds a partial source lookup index. Existing Basic
+writers and readers remain compatible because they continue to use the
+original non-null rating columns and ignore the nullable Advanced projection.
+The new worker must not be promoted before this migration is recorded; old
+readers may remain during the rolling compatibility window. Rollback is by a
+compensating application release and Redis rebuild from PostgreSQL; the
+applied migration and its audit columns are never removed.
+
 Migration `202608120002_research_content_immutability.sql` adds the database
 guard for research title, abstract, and content after submission. It protects
 the evaluated/publication version from direct SQL writers, including changes

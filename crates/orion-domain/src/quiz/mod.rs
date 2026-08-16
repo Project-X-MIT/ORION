@@ -7,6 +7,7 @@
 pub mod advanced;
 pub mod basic;
 #[cfg(test)]
+#[allow(clippy::duplicate_mod)]
 #[path = "../elo.rs"]
 pub mod elo;
 #[cfg(not(test))]

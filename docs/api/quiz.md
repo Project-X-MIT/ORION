@@ -157,10 +157,14 @@ current rating, and per-prediction result under the `predictions` response
 field. Client-supplied `score`, `outcome`, `delta`, or `rating` fields are
 ignored and never used for settlement.
 
-Numeric market-value predictions, calendar horizons, actual-value ingestion,
-and delayed/scored lifecycle states are not part of the completed DB-02 schema;
-they require the forward-only Advanced actual-value migration and approved
-source contract described in ADR 0005.
+The public HTTP Advanced endpoint remains the DB-02-compatible option-shaped
+contract above. Numeric market-value prediction resolution is a worker-owned
+settlement path: after the provider returns a validated final actual, the
+worker uses the forward-only `202608160001_advanced_actual_settlement.sql`
+migration and the shared atomic PostgreSQL scorer to persist the provider
+facts. Public actual-value ingestion, calendar configuration, and provider
+allowlisting still require the approved source contract described in ADR 0005;
+the local ADR remains Proposed until that approval is recorded.
 
 ## Attempt/result retrieval
 
