@@ -1,7 +1,11 @@
 use std::env;
 
 use chrono::{DateTime, Utc};
-use orion_db::{models::NewsArticle, pool, queries::news::upsert_article};
+use orion_db::{
+    models::NewsArticle,
+    pool,
+    queries::news::{latest_feed_filtered, upsert_article, NewsFeedFilters},
+};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
@@ -13,6 +17,8 @@ struct TestDatabase {
 
 impl TestDatabase {
     async fn create() -> Option<Self> {
+        // TODO(CI): configure ORION_TEST_DATABASE_URL (or DATABASE_URL) so
+        // PostgreSQL integration tests execute instead of being skipped.
         let database_url = env::var("ORION_TEST_DATABASE_URL")
             .or_else(|_| env::var("DATABASE_URL"))
             .ok()?;
@@ -186,6 +192,95 @@ async fn replaying_same_window_is_idempotent_even_concurrently() {
     assert_eq!(
         row_count, 1,
         "replaying a window must not create duplicates"
+    );
+
+    database.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cursor_pagination_has_no_gaps_or_duplicates_for_stable_data() {
+    let Some(database) = TestDatabase::create().await else {
+        return;
+    };
+
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO news_sources (id, name, slug, external_id, source_url)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(source_id)
+    .bind("Pagination Test Wire")
+    .bind("pagination-test-wire")
+    .bind("pagination-test-wire")
+    .bind("https://example.com/pagination-feed")
+    .execute(&database.pool)
+    .await
+    .expect("insert pagination test news source");
+
+    let first_timestamp = DateTime::parse_from_rfc3339("2026-08-13T10:00:00Z")
+        .expect("valid fixture timestamp")
+        .with_timezone(&Utc);
+    let second_timestamp = DateTime::parse_from_rfc3339("2026-08-13T11:00:00Z")
+        .expect("valid fixture timestamp")
+        .with_timezone(&Utc);
+    let third_timestamp = DateTime::parse_from_rfc3339("2026-08-13T12:00:00Z")
+        .expect("valid fixture timestamp")
+        .with_timezone(&Utc);
+    let fixtures = [
+        (Uuid::from_u128(5), third_timestamp),
+        (Uuid::from_u128(3), third_timestamp),
+        (Uuid::from_u128(4), second_timestamp),
+        (Uuid::from_u128(2), first_timestamp),
+        (Uuid::from_u128(1), first_timestamp),
+    ];
+
+    for (id, published_at) in fixtures {
+        sqlx::query(
+            "INSERT INTO news_articles
+                (id, source_id, external_id, title, summary, content, url,
+                 category, symbols, published_at, ingested_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $10, $10)",
+        )
+        .bind(id)
+        .bind(source_id)
+        .bind(format!("pagination-{id}"))
+        .bind(format!("Pagination article {id}"))
+        .bind("Pagination summary")
+        .bind("Pagination content")
+        .bind(format!("https://example.com/pagination/{id}"))
+        .bind("markets")
+        .bind(Vec::<String>::new())
+        .bind(published_at)
+        .execute(&database.pool)
+        .await
+        .expect("insert pagination test article");
+    }
+
+    let expected_ids = fixtures.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    let mut cursor = NewsFeedFilters::default();
+    let mut seen_ids = Vec::new();
+
+    loop {
+        let page = latest_feed_filtered(&database.pool, 2, 0, cursor)
+            .await
+            .expect("fetch cursor page");
+        if page.is_empty() {
+            break;
+        }
+
+        assert!(page.len() <= 2, "page exceeds requested limit");
+        seen_ids.extend(page.iter().map(|article| article.id));
+        let last = page.last().expect("non-empty page has a last article");
+        cursor = NewsFeedFilters {
+            cursor_published_at: Some(last.published_at),
+            cursor_id: Some(last.id),
+            ..NewsFeedFilters::default()
+        };
+    }
+
+    assert_eq!(
+        seen_ids, expected_ids,
+        "cursor pages must cover each stable article exactly once in feed order"
     );
 
     database.cleanup().await;

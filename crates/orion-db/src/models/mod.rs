@@ -13,7 +13,7 @@ pub use leaderboard::{LeaderboardEntry, LeaderboardRankHistory};
 pub use learning::{
     CourseCompletion, CourseLesson, CourseModule, CourseProgress, ModuleCompletion,
 };
-pub use news::{NewsArticle, NewsIngestionRun, NewsSource};
+pub use news::{NewsArticle, NewsFeedArticle, NewsIngestionRun, NewsSource};
 pub use notification::{NewNotification, Notification};
 pub use profile::{Profile, ProfileStatistics};
 pub use quiz_attempt::{

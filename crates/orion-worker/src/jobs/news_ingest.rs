@@ -25,6 +25,7 @@ use orion_db::{
     models::{NewsArticle, NewsSource},
     queries::news::upsert_article,
 };
+use orion_redis::{cache::news as news_cache, RedisClient};
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -440,14 +441,39 @@ impl NewsOutbox for UnconfiguredNewsOutbox {
     }
 }
 
-/// Placeholder until the shared Redis invalidation API is available. Cache
-/// failure is deliberately non-fatal because Redis is disposable and the
-/// public feed falls back to PostgreSQL.
+/// Safe default for local/unit usage. Cache failure is deliberately
+/// non-fatal because Redis is disposable and the public feed falls back to
+/// PostgreSQL.
 pub struct UnconfiguredNewsCacheInvalidator;
 
 impl NewsCacheInvalidator for UnconfiguredNewsCacheInvalidator {
     fn invalidate_news_feed<'a>(&'a self, _source_id: Uuid) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Err(anyhow!("news feed cache invalidator is not configured")) })
+    }
+}
+
+/// Production adapter for the registered news-feed cache family. The worker
+/// calls this only after DB-05 persistence and the publication event succeed.
+pub struct RedisNewsCacheInvalidator {
+    redis: RedisClient,
+}
+
+impl RedisNewsCacheInvalidator {
+    #[must_use]
+    pub fn new(redis: RedisClient) -> Self {
+        Self { redis }
+    }
+}
+
+impl NewsCacheInvalidator for RedisNewsCacheInvalidator {
+    fn invalidate_news_feed<'a>(&'a self, source_id: Uuid) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let deleted = news_cache::invalidate_after_ingestion(&self.redis)
+                .await
+                .map_err(|error| anyhow!("news feed cache invalidation failed: {error}"))?;
+            debug!(source_id = %source_id, deleted, "news feed cache invalidated after ingestion event");
+            Ok(())
+        })
     }
 }
 
@@ -627,6 +653,26 @@ impl NewsIngestor {
             admission,
             outbox,
             Arc::new(UnconfiguredNewsCacheInvalidator),
+            policy,
+        )
+    }
+
+    /// Constructs the production variant with the registered Redis cache
+    /// invalidator. Redis errors remain non-fatal to ingestion.
+    pub fn new_with_redis(
+        pool: PgPool,
+        adapter: Arc<dyn NewsProviderAdapter>,
+        admission: Arc<dyn NewsSourceAdmission>,
+        outbox: Arc<dyn NewsOutbox>,
+        redis: RedisClient,
+        policy: IngestionPolicy,
+    ) -> Result<Self> {
+        Self::new_with_cache_invalidator(
+            pool,
+            adapter,
+            admission,
+            outbox,
+            Arc::new(RedisNewsCacheInvalidator::new(redis)),
             policy,
         )
     }
