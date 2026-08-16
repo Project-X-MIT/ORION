@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
+import { LiveRegion } from "../../shared/accessibility/LiveRegion";
 import { isApiClientError } from "../../shared/api/errors";
+import { Form } from "../../shared/forms/Form";
+import { MarkdownEditor } from "../../shared/forms/MarkdownEditor";
+import { NumberField } from "../../shared/forms/NumberField";
+import { SelectField } from "../../shared/forms/SelectField";
+import { TextField } from "../../shared/forms/TextField";
 import { useAuth } from "../../providers/AuthProvider";
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Form,
-  LiveRegion,
-  MarkdownEditor,
-  NumberField,
-  Pagination,
-  SelectField,
-  TextField,
-} from "./researchPrimitives";
+import { Alert } from "../../shared/ui/Alert";
+import { Badge } from "../../shared/ui/Badge";
+import { Button } from "../../shared/ui/Button";
+import { Card } from "../../shared/ui/Card";
+import { Pagination } from "../../shared/ui/Pagination";
 import {
   useOwnResearchDrafts,
   usePublishedResearch,

@@ -1,9 +1,10 @@
 /**
- * Research-owned compatibility primitives.
+ * Temporary SHAURYA-01/02 placeholders.
  *
- * SHAURYA-01/02 provide the canonical shared implementations. These small
- * adapters keep this feature type-safe and runnable before those exports land;
- * their public props intentionally mirror the shared component contracts.
+ * Replace this file and/or the individual re-export files with the canonical
+ * shared implementations when Shaurya's dependencies land. Feature modules
+ * should continue importing the stable paths under shared/accessibility,
+ * shared/forms, and shared/ui.
  */
 import {
   forwardRef,
@@ -40,7 +41,7 @@ export function VisuallyHidden({ children }: { children: ReactNode }) {
   return <span style={visuallyHiddenStyle}>{children}</span>;
 }
 
-type FormProps = FormHTMLAttributes<HTMLFormElement> & {
+export type FormProps = FormHTMLAttributes<HTMLFormElement> & {
   description?: ReactNode;
   descriptionId?: string;
 };
@@ -232,9 +233,7 @@ export function Alert({ title, children, ...props }: AlertProps) {
   );
 }
 
-type BadgeProps = HTMLAttributes<HTMLSpanElement>;
-
-export function Badge({ children, ...props }: BadgeProps) {
+export function Badge({ children, ...props }: HTMLAttributes<HTMLSpanElement>) {
   return <span {...props}>{children}</span>;
 }
 
@@ -267,15 +266,7 @@ type PaginationProps = {
   onNext: () => void;
 };
 
-export function Pagination({
-  label,
-  page,
-  hasPrevious,
-  hasNext,
-  busy,
-  onPrevious,
-  onNext,
-}: PaginationProps) {
+export function Pagination({ label, page, hasPrevious, hasNext, busy, onPrevious, onNext }: PaginationProps) {
   return (
     <nav aria-label={label} aria-busy={busy}>
       <span>Page {page}</span>{" "}
