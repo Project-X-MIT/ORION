@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { LoginPage } from "../features/authentication/LoginPage";
 import { RegisterPage } from "../features/authentication/RegisterPage";
+import { LeaderboardPage } from "../features/leaderboard/LeaderboardPage";
 import { QuizPage } from "../features/quiz/QuizPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { useAuth } from "../providers/AuthProvider";
@@ -42,6 +43,7 @@ export function App() {
 
   if (path === "/login") return <PublicRoute><LoginPage /></PublicRoute>;
   if (path === "/register") return <PublicRoute><RegisterPage /></PublicRoute>;
+  if (path === "/leaderboard") return <ProtectedRoute><LeaderboardPage /></ProtectedRoute>;
   if (path === "/quiz") return <ProtectedRoute><QuizPage /></ProtectedRoute>;
   if (path === "/profile" || path.startsWith("/profiles/")) return <ProtectedRoute><ProfilePage userId={path.startsWith("/profiles/") ? path.slice("/profiles/".length) : user?.id} /></ProtectedRoute>;
   return <ProtectedRoute>
