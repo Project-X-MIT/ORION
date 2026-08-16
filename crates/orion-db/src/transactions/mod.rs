@@ -13,7 +13,9 @@ pub use notification::{
 };
 pub use outbox::{write_outbox_event, write_outbox_event_with_context};
 
-pub use advanced_settlement::{settle_advanced_attempt, settle_advanced_quiz};
+pub use advanced_settlement::{
+    settle_advanced_actual_quiz, settle_advanced_attempt, settle_advanced_quiz,
+};
 pub use basic_settlement::{settle_basic_attempt, settle_basic_quiz};
 pub use event_consumer::{
     claim_versioned_event, consume_notification_requested, EventConsumerError,
