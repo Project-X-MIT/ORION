@@ -1,6 +1,11 @@
 use std::env;
 
-use orion_db::{pool, transactions::write_outbox_event};
+use chrono::{Duration, Utc};
+use orion_db::{
+    pool,
+    queries::outbox::{claim_batch, fail, replay},
+    transactions::write_outbox_event,
+};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
@@ -109,6 +114,98 @@ async fn outbox_write_is_transactional_and_serializes_generic_payloads() {
     assert_eq!(event.1["body"], "ready");
     assert_eq!(event.2, "pending");
     assert_eq!(event.3, 0);
+
+    database.cleanup().await;
+}
+
+#[tokio::test]
+async fn outbox_claim_lease_retry_dead_letter_and_replay_preserve_identity() {
+    let Some(database) = TestDatabase::create().await else {
+        return;
+    };
+    pool::migrate(&database.pool)
+        .await
+        .expect("apply complete migration chain");
+
+    let event_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO outbox_events
+            (event_type, schema_version, payload, request_id, trace_id)
+         VALUES ('orion.synthetic.v1', 1, '{\"run\":\"lease-drill\"}', $1, $2)
+         RETURNING id",
+    )
+    .bind(Uuid::new_v4())
+    .bind("trace-lease-drill")
+    .fetch_one(&database.pool)
+    .await
+    .expect("insert synthetic outbox event");
+
+    let claimed = claim_batch(&database.pool, 1, 30)
+        .await
+        .expect("claim first lease");
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, event_id);
+    assert_eq!(claimed[0].job_attempts, 1);
+
+    let competing_claim = claim_batch(&database.pool, 1, 30)
+        .await
+        .expect("claim competing lease");
+    assert!(competing_claim.is_empty(), "active lease was double-owned");
+
+    sqlx::query(
+        "UPDATE outbox_events
+         SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second'
+         WHERE id = $1",
+    )
+    .bind(event_id)
+    .execute(&database.pool)
+    .await
+    .expect("expire synthetic lease");
+    let recovered = claim_batch(&database.pool, 1, 30)
+        .await
+        .expect("recover expired lease");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].id, event_id);
+    assert_eq!(recovered[0].job_attempts, 2);
+
+    fail(
+        &database.pool,
+        event_id,
+        "synthetic_poison_event",
+        2,
+        Utc::now() + Duration::seconds(1),
+    )
+    .await
+    .expect("dead-letter poison event");
+    let state = sqlx::query_as::<_, (String, String, i32, Option<Uuid>, Option<String>)>(
+        "SELECT status, job_status, job_attempts, request_id, trace_id
+         FROM outbox_events WHERE id = $1",
+    )
+    .bind(event_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read dead-letter state");
+    assert_eq!(state.0, "pending");
+    assert_eq!(state.1, "dead_letter");
+    assert_eq!(state.2, 2);
+    assert!(state.3.is_some());
+    assert_eq!(state.4.as_deref(), Some("trace-lease-drill"));
+
+    assert!(replay(&database.pool, event_id)
+        .await
+        .expect("replay dead letter"));
+    let replayed = sqlx::query_as::<_, (Uuid, String, String, i32, Option<String>)>(
+        "SELECT id, status, job_status, job_attempts, trace_id
+         FROM outbox_events WHERE id = $1",
+    )
+    .bind(event_id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read replay state");
+    assert_eq!(replayed.0, event_id);
+    assert_eq!(replayed.1, "pending");
+    assert_eq!(replayed.2, "queued");
+    assert_eq!(replayed.3, 2);
+    assert_eq!(replayed.4.as_deref(), Some("trace-lease-drill"));
 
     database.cleanup().await;
 }
