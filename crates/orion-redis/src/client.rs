@@ -105,6 +105,37 @@ impl RedisClient {
         Ok(())
     }
 
+    /// Deletes all keys matching a registered cache-family pattern using
+    /// incremental SCAN pages. This avoids the blocking Redis KEYS command.
+    pub async fn delete_pattern(&self, pattern: String) -> Result<u64, RedisClientError> {
+        let mut cursor = String::from("0");
+        let mut deleted = 0_u64;
+
+        loop {
+            let (next_cursor, keys): (String, Vec<fred::types::Key>) = self
+                .inner
+                .scan_page(cursor, pattern.clone(), Some(100), None)
+                .await
+                .map_err(RedisClientError::Command)?;
+
+            if !keys.is_empty() {
+                let removed: i64 = self
+                    .inner
+                    .del(keys)
+                    .await
+                    .map_err(RedisClientError::Command)?;
+                deleted = deleted.saturating_add(u64::try_from(removed).unwrap_or(0));
+            }
+
+            if next_cursor == "0" {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        Ok(deleted)
+    }
+
     /// Deletes a key only when its value still equals the expected payload.
     /// The comparison and deletion execute atomically inside Redis so a stale
     /// cache invalidation cannot remove a newer fill between two commands.

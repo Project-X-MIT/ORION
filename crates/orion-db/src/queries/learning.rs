@@ -28,25 +28,38 @@ const MODULE_BY_SLUG: &str = r#"
 "#;
 
 const PUBLISHED_LESSONS_BY_MODULE_ID: &str = r#"
-    SELECT id, module_id, slug, title, summary, content, lesson_order,
-           estimated_minutes, is_published, created_at, updated_at
-    FROM course_lessons
-    WHERE module_id = $1 AND is_published = TRUE
-    ORDER BY lesson_order ASC, id ASC
+    SELECT l.id, l.module_id, l.slug, l.title, l.summary, l.content,
+           l.lesson_order, l.estimated_minutes, l.is_published,
+           l.created_at, l.updated_at
+    FROM course_lessons AS l
+    INNER JOIN course_modules AS m ON m.id = l.module_id
+    WHERE l.module_id = $1
+      AND l.is_published = TRUE
+      AND m.is_published = TRUE
+    ORDER BY l.lesson_order ASC, l.id ASC
 "#;
 
 const LESSON_BY_ID: &str = r#"
-    SELECT id, module_id, slug, title, summary, content, lesson_order,
-           estimated_minutes, is_published, created_at, updated_at
-    FROM course_lessons
-    WHERE id = $1 AND is_published = TRUE
+    SELECT l.id, l.module_id, l.slug, l.title, l.summary, l.content,
+           l.lesson_order, l.estimated_minutes, l.is_published,
+           l.created_at, l.updated_at
+    FROM course_lessons AS l
+    INNER JOIN course_modules AS m ON m.id = l.module_id
+    WHERE l.id = $1
+      AND l.is_published = TRUE
+      AND m.is_published = TRUE
 "#;
 
 const LESSON_BY_MODULE_AND_SLUG: &str = r#"
-    SELECT id, module_id, slug, title, summary, content, lesson_order,
-           estimated_minutes, is_published, created_at, updated_at
-    FROM course_lessons
-    WHERE module_id = $1 AND slug = $2 AND is_published = TRUE
+    SELECT l.id, l.module_id, l.slug, l.title, l.summary, l.content,
+           l.lesson_order, l.estimated_minutes, l.is_published,
+           l.created_at, l.updated_at
+    FROM course_lessons AS l
+    INNER JOIN course_modules AS m ON m.id = l.module_id
+    WHERE l.module_id = $1
+      AND l.slug = $2
+      AND l.is_published = TRUE
+      AND m.is_published = TRUE
 "#;
 
 const PROGRESS_BY_USER_ID: &str = r#"
