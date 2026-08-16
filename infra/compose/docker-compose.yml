@@ -151,7 +151,7 @@ services:
       ORION_ALERT_EMAIL_TO: ${ORION_ALERT_EMAIL_TO:-shauryabijalwan@gmail.com}
     volumes:
       - ../monitoring/alert-receiver.py:/opt/orion/alert-receiver.py:ro
-    networks: [backend]
+    networks: [backend, edge]
 
 volumes:
   postgres_data:
