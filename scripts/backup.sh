@@ -5,10 +5,21 @@ set -euo pipefail
 : "${BACKUP_ENCRYPTION_KEY:?BACKUP_ENCRYPTION_KEY is required}"
 backup_dir="${BACKUP_DIR:-${PWD}/.orion-backups}"
 mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 plain="$(mktemp "${TMPDIR:-/tmp}/orion-backup.XXXXXX.dump")"
 encrypted="$backup_dir/orion-${timestamp}.dump.enc"
-trap 'rm -f "$plain"' EXIT
+
+on_exit() {
+  status=$?
+  if [[ "$status" -ne 0 ]]; then
+    date -u +%s > "$backup_dir/.last-failure"
+    chmod 600 "$backup_dir/.last-failure"
+  fi
+  rm -f "$plain"
+  exit "$status"
+}
+trap on_exit EXIT
 
 pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" > "$plain"
 pg_restore --list "$plain" >/dev/null
@@ -19,4 +30,6 @@ else
   shasum -a 256 "$encrypted" > "$encrypted.sha256"
 fi
 chmod 600 "$encrypted" "$encrypted.sha256"
+date -u +%s > "$backup_dir/.last-success"
+chmod 600 "$backup_dir/.last-success"
 printf 'created encrypted backup %s\n' "$encrypted"

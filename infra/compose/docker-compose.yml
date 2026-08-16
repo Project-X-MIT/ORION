@@ -104,6 +104,18 @@ services:
       - "9090:9090"
     networks: [backend, edge]
 
+  backup-exporter:
+    image: python:3.13-alpine
+    profiles: [monitoring]
+    command: ["python", "/opt/orion/backup-exporter.py"]
+    environment:
+      ORION_BACKUP_DIR: ${ORION_BACKUP_DIR:-/var/lib/orion/backups}
+      ORION_BACKUP_MAX_AGE_SECONDS: ${ORION_BACKUP_MAX_AGE_SECONDS:-86400}
+    volumes:
+      - backup_data:/var/lib/orion/backups:ro
+      - ../monitoring/backup-exporter.py:/opt/orion/backup-exporter.py:ro
+    networks: [backend]
+
   grafana:
     image: grafana/grafana:12.0.2
     profiles: [monitoring]
@@ -158,6 +170,7 @@ volumes:
   prometheus_data:
   alertmanager_data:
   grafana_data:
+  backup_data:
 
 networks:
   backend:
