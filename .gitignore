@@ -20,6 +20,7 @@ dist/
 dist-ssr/
 *.local
 .npm/
+__pycache__/
 
 # Environment
 .env

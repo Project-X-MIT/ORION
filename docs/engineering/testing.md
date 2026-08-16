@@ -52,3 +52,27 @@ the latest append-only ledger value (or the 1200 starting rating). A local
 divergence drill may insert a synthetic mismatch, verify that the metric and
 alert reach the webhook, and then restore the isolated database; it must never
 run against production.
+
+## Ubuntu staging email notifications
+
+Set the VM's protected Compose environment (never commit it) before starting
+the monitoring profile:
+
+```bash
+chmod 600 .env
+ORION_APP_ENV=staging
+ORION_SESSION_COOKIE_SECURE=true
+ORION_SMTP_SMARTHOST=smtp.gmail.com:587
+ORION_SMTP_FROM=staging-sender@example.com
+ORION_SMTP_USERNAME=staging-sender@example.com
+ORION_SMTP_PASSWORD=<provider app password>
+ORION_SMTP_REQUIRE_TLS=true
+ORION_ALERT_EMAIL_TO=shauryabijalwan@gmail.com
+docker compose -f infra/compose/docker-compose.yml --profile monitoring up -d
+```
+
+Alertmanager sends firing and resolved notifications to the webhook receiver;
+the receiver forwards the same allow-listed alert summary by SMTP when the
+SMTP variables are populated. Use a provider app password or SMTP relay
+credential, not a personal account password. A real email delivery is not
+claimed until the staging owner confirms receipt of both messages.
