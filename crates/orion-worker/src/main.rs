@@ -139,6 +139,15 @@ async fn poll_notification_jobs(
     .await?;
 
     for event in events {
+        tracing::info!(
+            target: "orion.outbox",
+            event_id = %event.id,
+            event_type = %event.event_type,
+            request_id = ?event.request_id,
+            trace_id = ?event.trace_id,
+            attempt = event.job_attempts,
+            "dispatching typed notification event"
+        );
         match dispatch_notification(pool, &event).await {
             Ok(()) => {
                 let _ = orion_db::queries::outbox::complete(pool, event.id).await?;
