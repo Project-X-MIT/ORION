@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use orion_domain::quiz::{AdvancedActualValue, AdvancedPrediction};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -117,9 +118,27 @@ pub struct QuizSettlementResult {
     pub events: Vec<RatingEvent>,
 }
 
-/// Convenience aliases for callers that want mode-specific names.
+/// One validated prediction/actual pair passed to the atomic Advanced
+/// settlement transaction. The worker owns provider access and validation;
+/// PostgreSQL owns scoring, Elo updates, idempotency, and persistence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdvancedSettlementResolution {
+    pub prediction: AdvancedPrediction,
+    pub actual: AdvancedActualValue,
+}
+
+/// Input for the actual-value-driven Advanced settlement path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdvancedSettlementInput {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub resolutions: Vec<AdvancedSettlementResolution>,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+}
+
+/// Convenience alias for the Basic settlement API.
 pub type BasicSettlementInput = QuizSettlementInput;
-pub type AdvancedSettlementInput = QuizSettlementInput;
 
 pub const ATTEMPT_PENDING: &str = "pending";
 pub const ATTEMPT_COMPLETED: &str = "completed";

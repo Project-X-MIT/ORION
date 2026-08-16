@@ -9,7 +9,7 @@ use std::{
 
 use chrono::{Duration as ChronoDuration, Utc};
 use orion_db::{
-    models::{NewQuizAttempt, QuizAnswer, QuizType},
+    models::{NewQuizAttempt, QuizType},
     pool,
     queries::quiz_attempts::{create_pending, find_by_id},
 };
@@ -71,7 +71,6 @@ struct TestDatabase {
     schema: String,
     user_id: Uuid,
     question_id: Uuid,
-    option_id: Uuid,
 }
 
 impl TestDatabase {
@@ -155,7 +154,6 @@ impl TestDatabase {
             schema,
             user_id,
             question_id,
-            option_id,
         })
     }
 
@@ -194,7 +192,6 @@ impl TestDatabase {
                     value: Decimal::new(100, 2),
                     submitted_at: now - ChronoDuration::minutes(3),
                 },
-                settlement_answer: QuizAnswer::selected(self.question_id, self.option_id),
                 question,
             }],
         }
@@ -276,6 +273,25 @@ async fn one_hundred_duplicate_deliveries_create_one_settlement_and_rating_event
     assert_eq!(outbox_count, 3);
     assert_eq!(completed, "completed");
     assert!(calls.load(Ordering::SeqCst) >= 1);
+
+    let audit = sqlx::query_as::<_, (Decimal, Decimal, Decimal, String, i32)>(
+        "SELECT advanced_prediction_value,
+                advanced_actual_value,
+                advanced_relative_error_pct,
+                zone,
+                k
+         FROM rating_events
+         WHERE attempt_id = $1",
+    )
+    .bind(pending.id)
+    .fetch_one(&database.pool)
+    .await
+    .expect("read actual-value rating audit");
+    assert_eq!(audit.0, Decimal::new(100, 2));
+    assert_eq!(audit.1, Decimal::new(100, 2));
+    assert_eq!(audit.2, Decimal::ZERO);
+    assert_eq!(audit.3, "Win");
+    assert_eq!(audit.4, 30);
 
     database.cleanup().await;
 }

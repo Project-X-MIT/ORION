@@ -11,12 +11,13 @@ use std::{
 use chrono::Utc;
 use orion_db::{
     models::{
-        QuizAnswer, QuizAttempt, QuizSettlementInput, QuizSettlementResult, ATTEMPT_COMPLETED,
+        AdvancedSettlementInput, AdvancedSettlementResolution, QuizAttempt, QuizSettlementResult,
+        ATTEMPT_COMPLETED,
     },
     queries::{quiz_attempts, ratings},
-    transactions::settle_advanced_quiz,
+    transactions::settle_advanced_actual_quiz,
 };
-use rust_decimal::Decimal;
+pub use orion_domain::quiz::{AdvancedActualValue, AdvancedPrediction};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use thiserror::Error;
@@ -34,9 +35,7 @@ pub const ADVANCED_PROVIDER_OUTAGE_ALERT: &str = "advanced_actual_provider_unava
 pub const ADVANCED_SETTLEMENT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_ADVANCED_SETTLEMENT_ATTEMPTS: u32 = 5;
 
-/// Minimal immutable ADR contract required by the worker. The canonical
-/// domain module contains the same invariants; this copy is kept local until
-/// the protected domain crate export is added by its owner.
+/// Minimal immutable ADR question contract supplied by DB-02.
 #[derive(Debug, Clone)]
 pub struct AdvancedQuestion {
     pub id: Uuid,
@@ -45,35 +44,16 @@ pub struct AdvancedQuestion {
     pub expires_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AdvancedPrediction {
-    pub question_id: Uuid,
-    pub value: Decimal,
-    pub submitted_at: chrono::DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdvancedActualValue {
-    pub question_id: Uuid,
-    pub value: Decimal,
-    pub observed_at: chrono::DateTime<Utc>,
-    pub available_at: chrono::DateTime<Utc>,
-    pub source_id: String,
-    pub source_version: String,
-    pub is_final: bool,
-}
-
 pub type ActualFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ResolvedActual, ActualProviderError>> + Send + 'a>>;
 
-/// The DB-02 adapter supplies the immutable Advanced question contract,
-/// prediction, and canonical answer that the existing atomic DB transaction
-/// settles. The actual value itself is always fetched from the provider.
+/// The DB-02 adapter supplies the immutable Advanced question contract and
+/// prediction. The actual value is fetched from the provider and passed into
+/// the atomic DB-02 settlement transaction after validation.
 #[derive(Debug, Clone)]
 pub struct AdvancedResolution {
     pub question: AdvancedQuestion,
     pub prediction: AdvancedPrediction,
-    pub settlement_answer: QuizAnswer,
 }
 
 #[derive(Debug, Clone)]
@@ -274,20 +254,21 @@ where
         return Err(AdvancedSettlementError::InvalidAttemptContext);
     }
 
-    let answers = resolve_and_validate(provider, &context.resolutions).await?;
+    let resolutions = resolve_and_validate(provider, &context.resolutions).await?;
     hooks.reached(AdvancedSettlementBoundary::AfterActualValidation)?;
     hooks.reached(AdvancedSettlementBoundary::BeforeAtomicSettlement)?;
-    let input = QuizSettlementInput {
+    let input = AdvancedSettlementInput {
         attempt_id: pending.id,
         user_id: pending.user_id,
-        answers,
+        resolutions,
         started_at: pending.started_at,
         completed_at: Utc::now(),
     };
 
     // This is deliberately the only call to the atomic Advanced settlement
-    // interface. It owns scoring, Elo, rating_events, and quiz_attempts.
-    let result = settle_advanced_quiz(pool, input).await?;
+    // interface. It owns domain scoring, Elo, rating_events, and the
+    // pending-to-completed transition.
+    let result = settle_advanced_actual_quiz(pool, input).await?;
     hooks.reached(AdvancedSettlementBoundary::AfterAtomicSettlement)?;
     hooks.reached(AdvancedSettlementBoundary::BeforeOutbox)?;
     ensure_outbox_events(pool, &result)
@@ -394,18 +375,15 @@ where
 async fn resolve_and_validate<P>(
     provider: &P,
     resolutions: &[AdvancedResolution],
-) -> Result<Vec<QuizAnswer>, AdvancedSettlementError>
+) -> Result<Vec<AdvancedSettlementResolution>, AdvancedSettlementError>
 where
     P: AdvancedActualProvider,
 {
-    let mut answers = Vec::with_capacity(resolutions.len());
+    let mut resolved = Vec::with_capacity(resolutions.len());
     let mut question_ids = HashMap::with_capacity(resolutions.len());
     for resolution in resolutions {
         validate_advanced_prediction(&resolution.question, &resolution.prediction)?;
-        if resolution.settlement_answer.question_id != resolution.question.id
-            || resolution.settlement_answer.option_id.is_none()
-            || question_ids.insert(resolution.question.id, ()).is_some()
-        {
+        if question_ids.insert(resolution.question.id, ()).is_some() {
             return Err(AdvancedSettlementError::InvalidAttemptContext);
         }
 
@@ -422,9 +400,12 @@ where
         if actual.value.available_at > Utc::now() {
             return Err(AdvancedSettlementError::ActualNotAvailable);
         }
-        answers.push(resolution.settlement_answer);
+        resolved.push(AdvancedSettlementResolution {
+            prediction: resolution.prediction.clone(),
+            actual: actual.value,
+        });
     }
-    Ok(answers)
+    Ok(resolved)
 }
 
 fn validate_advanced_prediction(
@@ -698,7 +679,6 @@ mod tests {
                 submitted_at: now - ChronoDuration::minutes(3),
             },
             question,
-            settlement_answer: QuizAnswer::selected(question_id, Uuid::from_u128(2)),
         }
     }
 
@@ -725,12 +705,14 @@ mod tests {
             result: Ok(actual(&resolution)),
         };
 
-        let answers = resolve_and_validate(&provider, std::slice::from_ref(&resolution))
+        let resolutions = resolve_and_validate(&provider, std::slice::from_ref(&resolution))
             .await
             .expect("valid actual");
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(answers, vec![resolution.settlement_answer]);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].prediction, resolution.prediction);
+        assert_eq!(resolutions[0].actual.value, Decimal::new(100, 2));
     }
 
     #[tokio::test]
