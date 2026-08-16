@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use orion_domain::quiz::{AdvancedActualValue, AdvancedPrediction};
+use rust_decimal::Decimal;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -125,6 +126,44 @@ pub struct QuizSettlementResult {
 pub struct AdvancedSettlementResolution {
     pub prediction: AdvancedPrediction,
     pub actual: AdvancedActualValue,
+}
+
+/// One exact numeric prediction accepted for worker-owned Advanced settlement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvancedPredictionSubmission {
+    pub question_id: Uuid,
+    pub value: Decimal,
+    pub submitted_at: DateTime<Utc>,
+}
+
+/// Input for recording an Advanced numeric submission without scoring it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvancedPredictionSubmissionInput {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub predictions: Vec<AdvancedPredictionSubmission>,
+    pub started_at: DateTime<Utc>,
+    pub request_id: Option<Uuid>,
+}
+
+/// Result of an idempotent numeric submission. A retry can observe that the
+/// worker already completed the attempt and receive the completed result.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AdvancedSubmissionResult {
+    Pending {
+        attempt: QuizAttempt,
+        user_rating: UserRating,
+    },
+    Completed(QuizSettlementResult),
+}
+
+/// A prediction row loaded by the worker from PostgreSQL.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct AdvancedPredictionRecord {
+    pub attempt_id: Uuid,
+    pub question_id: Uuid,
+    pub value: Decimal,
+    pub submitted_at: DateTime<Utc>,
 }
 
 /// Input for the actual-value-driven Advanced settlement path.

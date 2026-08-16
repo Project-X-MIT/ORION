@@ -14,10 +14,13 @@ use orion_db::{
         AdvancedSettlementInput, AdvancedSettlementResolution, QuizAttempt, QuizSettlementResult,
         ATTEMPT_COMPLETED,
     },
-    queries::{quiz_attempts, ratings},
+    queries::{advanced_actuals, quiz_attempts, quiz_questions, ratings},
     transactions::settle_advanced_actual_quiz,
 };
 pub use orion_domain::quiz::{AdvancedActualValue, AdvancedPrediction};
+use orion_domain::{
+    events::ensure_event_compatible, AdvancedSubmissionRequestedV1, VersionedEvent,
+};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use thiserror::Error;
@@ -31,9 +34,25 @@ pub const ADVANCED_SETTLED_EVENT_TYPE: &str = "orion.quiz.advanced.settled";
 pub const ADVANCED_CACHE_INVALIDATION_EVENT_TYPE: &str = "orion.quiz.cache.invalidate";
 pub const ADVANCED_NOTIFICATION_EVENT_TYPE: &str = "orion.notification.requested";
 pub const ADVANCED_DEAD_LETTER_EVENT_TYPE: &str = "orion.quiz.advanced.settlement.dead_lettered";
+pub const ADVANCED_SUBMITTED_EVENT_TYPE: &str = AdvancedSubmissionRequestedV1::EVENT_TYPE;
 pub const ADVANCED_PROVIDER_OUTAGE_ALERT: &str = "advanced_actual_provider_unavailable";
 pub const ADVANCED_SETTLEMENT_SCHEMA_VERSION: i32 = 1;
 pub const MAX_ADVANCED_SETTLEMENT_ATTEMPTS: u32 = 5;
+
+/// Reads final provider facts from PostgreSQL. An external approved ingestion
+/// adapter owns writing `advanced_actual_values`; this worker never calls a
+/// client-controlled endpoint and never uses Redis as an actual-value source.
+#[derive(Debug, Clone)]
+pub struct PostgresAdvancedActualProvider {
+    pool: PgPool,
+}
+
+impl PostgresAdvancedActualProvider {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
 
 /// Minimal immutable ADR question contract supplied by DB-02.
 #[derive(Debug, Clone)]
@@ -42,6 +61,7 @@ pub struct AdvancedQuestion {
     pub value_scale: u32,
     pub horizon_at: chrono::DateTime<Utc>,
     pub expires_at: chrono::DateTime<Utc>,
+    pub provider_key: String,
 }
 
 pub type ActualFuture<'a> =
@@ -113,6 +133,35 @@ pub trait AdvancedActualProvider: Send + Sync {
     fn obtain_actual<'a>(&'a self, question: &'a AdvancedQuestion) -> ActualFuture<'a>;
 }
 
+impl AdvancedActualProvider for PostgresAdvancedActualProvider {
+    fn obtain_actual<'a>(&'a self, question: &'a AdvancedQuestion) -> ActualFuture<'a> {
+        Box::pin(async move {
+            let Some(actual) = advanced_actuals::by_question_id(&self.pool, question.id)
+                .await
+                .map_err(|_| ActualProviderError::Unavailable)?
+            else {
+                return Err(ActualProviderError::Unavailable);
+            };
+
+            if !actual.is_final {
+                return Err(ActualProviderError::Unavailable);
+            }
+
+            Ok(ResolvedActual {
+                value: AdvancedActualValue {
+                    question_id: actual.question_id,
+                    value: actual.value,
+                    observed_at: actual.observed_at,
+                    available_at: actual.available_at,
+                    source_id: actual.source_id,
+                    source_version: actual.source_version,
+                    is_final: actual.is_final,
+                },
+            })
+        })
+    }
+}
+
 #[derive(Debug, Clone, Error)]
 pub enum ActualProviderError {
     #[error("Advanced actual provider is unavailable")]
@@ -143,6 +192,8 @@ pub enum AdvancedValidationError {
     ActualAvailableBeforeObserved,
     #[error("Advanced actual source metadata is empty")]
     EmptyActualSource,
+    #[error("Advanced actual source does not match the question provider contract")]
+    ActualSourceMismatch,
 }
 
 #[derive(Debug, Error)]
@@ -194,6 +245,121 @@ pub async fn locate_pending_advanced_attempts(
     offset: i64,
 ) -> Result<Vec<QuizAttempt>, sqlx::Error> {
     quiz_attempts::pending_advanced_by_user_id(pool, user_id, limit, offset).await
+}
+
+/// Loads the exact numeric predictions persisted by the API for a pending
+/// attempt. Question contracts remain supplied by the DB-02 adapter/provider
+/// boundary; this function only reads PostgreSQL prediction facts.
+pub async fn load_advanced_predictions(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<Vec<AdvancedPrediction>, sqlx::Error> {
+    quiz_attempts::advanced_predictions_by_attempt_id(pool, attempt_id)
+        .await
+        .map(|predictions| {
+            predictions
+                .into_iter()
+                .map(|prediction| AdvancedPrediction {
+                    question_id: prediction.question_id,
+                    value: prediction.value,
+                    submitted_at: prediction.submitted_at,
+                })
+                .collect()
+        })
+}
+
+/// Builds the worker context exclusively from DB-02 question and prediction
+/// interfaces. Missing or incomplete question contracts are rejected rather
+/// than assigned a guessed horizon, scale, or provider.
+pub async fn load_advanced_attempt_context(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    user_id: Uuid,
+) -> Result<AdvancedAttemptContext, AdvancedSettlementError> {
+    let Some(attempt) = quiz_attempts::find_by_id(pool, attempt_id).await? else {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    };
+    if attempt.user_id != user_id
+        || attempt.quiz_type != "advanced"
+        || attempt.status != "pending" && attempt.status != ATTEMPT_COMPLETED
+    {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    }
+
+    let predictions = load_advanced_predictions(pool, attempt_id).await?;
+    if predictions.len() != usize::try_from(attempt.total_questions).unwrap_or(0) {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    }
+    let question_ids = predictions
+        .iter()
+        .map(|prediction| prediction.question_id)
+        .collect::<Vec<_>>();
+    let contracts = quiz_questions::advanced_contracts_by_question_ids(pool, &question_ids).await?;
+    if contracts.len() != predictions.len() {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    }
+
+    let mut contracts = contracts
+        .into_iter()
+        .map(|contract| (contract.id, contract))
+        .collect::<HashMap<_, _>>();
+    let mut resolutions = Vec::with_capacity(predictions.len());
+    for prediction in predictions {
+        let Some(contract) = contracts.remove(&prediction.question_id) else {
+            return Err(AdvancedSettlementError::InvalidAttemptContext);
+        };
+        let value_scale = u32::try_from(contract.value_scale)
+            .map_err(|_| AdvancedSettlementError::InvalidAttemptContext)?;
+        resolutions.push(AdvancedResolution {
+            question: AdvancedQuestion {
+                id: contract.id,
+                value_scale,
+                horizon_at: contract.horizon_at,
+                expires_at: contract.expires_at,
+                provider_key: contract.provider_key,
+            },
+            prediction,
+        });
+    }
+
+    Ok(AdvancedAttemptContext {
+        attempt_id,
+        user_id,
+        resolutions,
+    })
+}
+
+/// Typed consumer entry point for the durable numeric-submission event.
+/// Payload values are only routing metadata; predictions and question facts
+/// are reloaded from PostgreSQL before the provider and settlement are called.
+pub async fn process_advanced_submission_event(
+    pool: &PgPool,
+    provider: &impl AdvancedActualProvider,
+    event: &orion_db::models::OutboxEvent,
+) -> Result<AdvancedSettlementOutcome, AdvancedSettlementError> {
+    let schema_version = u16::try_from(event.schema_version)
+        .map_err(|_| AdvancedSettlementError::InvalidAttemptContext)?;
+    if event.event_type != ADVANCED_SUBMITTED_EVENT_TYPE
+        || ensure_event_compatible(event.event_type.as_str(), schema_version).is_err()
+    {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    }
+    let request: AdvancedSubmissionRequestedV1 = serde_json::from_value(event.payload.clone())
+        .map_err(|_| AdvancedSettlementError::InvalidAttemptContext)?;
+    let context = load_advanced_attempt_context(pool, request.attempt_id, request.user_id).await?;
+    let loaded_question_ids = context
+        .resolutions
+        .iter()
+        .map(|resolution| resolution.question.id)
+        .collect::<std::collections::HashSet<_>>();
+    let requested_question_ids = request
+        .question_ids
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    if loaded_question_ids != requested_question_ids {
+        return Err(AdvancedSettlementError::InvalidAttemptContext);
+    }
+    settle_pending_advanced_with_retry(pool, provider, &context, RetryPolicy::default()).await
 }
 
 /// Settles one pending attempt once. The provider is called once per
@@ -454,6 +620,9 @@ fn validate_advanced_actual_value(
     if actual.source_id.trim().is_empty() || actual.source_version.trim().is_empty() {
         return Err(AdvancedValidationError::EmptyActualSource);
     }
+    if actual.source_id.trim() != question.provider_key.trim() {
+        return Err(AdvancedValidationError::ActualSourceMismatch);
+    }
     Ok(())
 }
 
@@ -676,6 +845,7 @@ mod tests {
             value_scale: 2,
             horizon_at: now - ChronoDuration::minutes(2),
             expires_at: now + ChronoDuration::minutes(2),
+            provider_key: "provider".to_owned(),
         };
         AdvancedResolution {
             prediction: AdvancedPrediction {

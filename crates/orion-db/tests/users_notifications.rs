@@ -89,6 +89,8 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
         "user_ratings",
         "rating_ledger",
         "quiz_attempts",
+        "advanced_predictions",
+        "advanced_actual_values",
         "leaderboard_rank_history",
         "research_papers",
         "news_articles",
@@ -101,6 +103,47 @@ async fn fresh_chain_users_notifications_and_seed_are_repeat_safe() {
             .await
             .expect("check migrated feature table");
         assert!(exists, "missing migrated table {table}");
+    }
+
+    for column in [
+        "advanced_unit_code",
+        "advanced_value_scale",
+        "advanced_market_calendar_id",
+        "advanced_horizon_at",
+        "advanced_expires_at",
+        "advanced_provider_key",
+    ] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'quiz_questions'
+                  AND column_name = $1
+            )",
+        )
+        .bind(column)
+        .fetch_one(&database.pool)
+        .await
+        .expect("inspect Advanced question contract column");
+        assert!(exists, "missing Advanced question contract column {column}");
+    }
+
+    for index in [
+        "advanced_questions_horizon_idx",
+        "advanced_actual_values_ready_idx",
+    ] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND indexname = $1
+            )",
+        )
+        .bind(index)
+        .fetch_one(&database.pool)
+        .await
+        .expect("inspect Advanced migration index");
+        assert!(exists, "missing Advanced migration index {index}");
     }
 
     let users = UserRepository::new(database.pool.clone());
@@ -377,6 +420,13 @@ async fn upgrade_accepts_recorded_empty_legacy_migrations() {
     .await
     .expect("inspect upgraded users table");
     assert!(has_email);
+    let has_advanced_predictions: bool = sqlx::query_scalar(
+        "SELECT to_regclass(current_schema() || '.advanced_predictions') IS NOT NULL",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .expect("inspect upgraded Advanced schema");
+    assert!(has_advanced_predictions);
     let legacy_username: String = sqlx::query_scalar(
         "SELECT username::text FROM users
          WHERE id = '00000000-0000-0000-0000-000000000099'",

@@ -12,6 +12,10 @@ metadata.
 | --- | --- | --- | --- |
 | `orion.rating.updated` | akaidk | 1 | Announce an already committed authoritative rating change. |
 | `orion.notification.requested` | divi912 | 1 | Request durable notification creation with a deduplication key. |
+| `orion.quiz.advanced.submitted` | akaidk | 1 | Request provider-backed settlement of an accepted numeric Advanced attempt. |
+| `orion.quiz.advanced.settled` | akaidk | 1 | Announce a committed Advanced score and rating result. |
+| `orion.quiz.cache.invalidate` | akaidk | 1 | Request best-effort invalidation of committed Advanced question projections. |
+| `orion.quiz.advanced.settlement.dead_lettered` | akaidk | 1 | Record terminal Advanced settlement handling without changing the pending attempt. |
 
 Version 1 fixtures are stored in `docs/contracts/fixtures/`. Adding an optional
 field with a defined default can remain within a version. Renaming/removing a
