@@ -20,6 +20,7 @@ dist/
 dist-ssr/
 *.local
 .npm/
+__pycache__/
 
 # Environment
 .env
@@ -32,3 +33,6 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Synthetic staging reports
+.staging-evidence/

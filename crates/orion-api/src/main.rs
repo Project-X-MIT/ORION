@@ -1,5 +1,7 @@
 use anyhow::Context;
+use std::future::IntoFuture;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tracing_subscriber::EnvFilter;
 
 use orion_api::{app, config::AppConfig, state::AppState};
@@ -19,11 +21,29 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("could not bind API listener to {bind_address}"))?;
     tracing::info!(%bind_address, "orion-api is ready");
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(state.clone()));
-    match tokio::time::timeout(shutdown_timeout, server).await {
-        Ok(Ok(())) => tracing::info!("orion-api stopped cleanly"),
-        Ok(Err(error)) => return Err(error).context("API server failed"),
-        Err(_) => tracing::error!(?shutdown_timeout, "API shutdown deadline exceeded"),
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+    let shutdown_signal = shutdown_signal(state.clone());
+    tokio::pin!(shutdown_signal);
+
+    tokio::select! {
+        result = &mut server => match result {
+            Ok(()) => tracing::info!("orion-api stopped cleanly"),
+            Err(error) => return Err(error).context("API server failed"),
+        },
+        _ = &mut shutdown_signal => {
+            let _ = shutdown_tx.send(());
+            match tokio::time::timeout(shutdown_timeout, &mut server).await {
+                Ok(Ok(())) => tracing::info!("orion-api stopped cleanly"),
+                Ok(Err(error)) => return Err(error).context("API server failed"),
+                Err(_) => tracing::error!(?shutdown_timeout, "API shutdown deadline exceeded"),
+            }
+        }
     }
     state.close().await;
     Ok(())
