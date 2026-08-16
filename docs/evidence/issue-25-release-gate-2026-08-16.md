@@ -18,6 +18,32 @@ The failure-path canary command returned exit status 1 after the rollback hook
 accepted the previous immutable image digests. This is intentional: promotion
 stops after rollback and must not continue automatically.
 
+## Linux VM verification rerun
+
+On 2026-08-16 UTC (2026-08-17 IST), the same controls were rerun on the
+disposable Ubuntu host `orion-vm` at commit `f6ee12d` on `Shaurya's-Branch`.
+The raw staging log remains on the VM at
+`~/ORION/.staging-evidence/staging-issue25-linux-20260816.txt`.
+
+- The API, worker and frontend images rebuilt successfully and the API became
+  ready with healthy PostgreSQL and Redis dependencies.
+- The leaderboard load test completed 1,501 requests with 0 failures; p95 was
+  3.27 ms. The peak API test completed 2,594 iterations / 5,188 checks with
+  0 failures; p95 was 168.54 ms.
+- Redis loss preserved a 200 leaderboard response; PostgreSQL loss returned a
+  safe 503 for registration; worker termination and API graceful shutdown
+  both recovered.
+- The feature-flag validator passed all four default-off flags, and the
+  post-deploy smoke probe returned 200 for `/health/live`, `/health/ready`,
+  and `/`.
+- An isolated encrypted backup/restore drill passed with a 0-second RPO age,
+  1-second restore (within the 3,600-second RTO), 21 public-table row-count
+  matches (including 14,636 users and user ratings), matching constraints
+  (84 primary, 59 unique, 20 foreign-key, 108 check), zero unvalidated
+  foreign keys, and zero lifecycle/invariant violations. The target database
+  was dropped after verification. Backup SHA-256 was
+  `214f9fe755c4ce658dcac5dc95e20b19ca90134bedbec24d76e4b6294616de65`.
+
 ## Evidence boundaries
 
 The UAT fixture covers the public authentication journeys and authenticated
