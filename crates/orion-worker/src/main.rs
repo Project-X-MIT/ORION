@@ -1,18 +1,20 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use orion_db::pool::{connect_migrate_and_validate, PoolConfig};
+use orion_domain::{EventEnvelope, EventId, NotificationRequestedV1, VersionedEvent};
 use sqlx::PgPool;
 use tokio::time::interval;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use orion_worker::{
-    jobs::outbox_dispatch,
     jobs::research_review::{
         claim_research_review_job, fail_research_review_job, process_research_award,
     },
-    scheduler::{self, RESEARCH_REVIEW_JOB_ID},
+    jobs::{notification::process_notification, outbox_dispatch},
+    scheduler::{self, NOTIFICATION_JOB_ID, RESEARCH_REVIEW_JOB_ID},
 };
 
 const DEFAULT_POLL_INTERVAL_SECONDS: u64 = 5;
@@ -107,6 +109,9 @@ async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<
                 recover_stale_research_jobs(pool, job.trigger, running_lease).await?;
                 poll_research_review_jobs(pool, job.trigger).await?;
             }
+            NOTIFICATION_JOB_ID => {
+                poll_notification_jobs(pool, job.trigger, running_lease).await?;
+            }
             _ => tracing::debug!(
                 target: "orion.worker",
                 job_id = job.id,
@@ -118,6 +123,66 @@ async fn poll_registered_jobs(pool: &PgPool, running_lease: Duration) -> Result<
         }
     }
     Ok(())
+}
+
+async fn poll_notification_jobs(
+    pool: &PgPool,
+    event_type: &str,
+    running_lease: Duration,
+) -> Result<()> {
+    let events = orion_db::queries::outbox::claim_batch_for_event_type(
+        pool,
+        event_type,
+        MAX_PENDING_JOBS_PER_POLL,
+        running_lease.as_secs() as i64,
+    )
+    .await?;
+
+    for event in events {
+        match dispatch_notification(pool, &event).await {
+            Ok(()) => {
+                let _ = orion_db::queries::outbox::complete(pool, event.id).await?;
+            }
+            Err(error) => {
+                let delay = 2_i64
+                    .saturating_pow((event.job_attempts.max(1) - 1) as u32)
+                    .min(300);
+                orion_db::queries::outbox::fail(
+                    pool,
+                    event.id,
+                    &error.to_string(),
+                    outbox_dispatch::MAX_ATTEMPTS,
+                    Utc::now() + chrono::Duration::seconds(delay),
+                )
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn dispatch_notification(pool: &PgPool, event: &orion_db::models::OutboxEvent) -> Result<()> {
+    let schema_version = u16::try_from(event.schema_version)
+        .map_err(|_| anyhow::anyhow!("invalid notification schema version"))?;
+    if schema_version != NotificationRequestedV1::SCHEMA_VERSION
+        || event.event_type != NotificationRequestedV1::EVENT_TYPE
+    {
+        anyhow::bail!("unsupported notification event contract");
+    }
+    let payload: NotificationRequestedV1 = serde_json::from_value(event.payload.clone())
+        .map_err(|_| anyhow::anyhow!("invalid notification event contract"))?;
+    let envelope = EventEnvelope {
+        event_id: EventId::from_uuid(event.id),
+        event_type: event.event_type.clone(),
+        schema_version,
+        occurred_at: event.created_at,
+        producer: "orion-outbox".to_owned(),
+        payload,
+    };
+    process_notification(pool, None, &envelope)
+        .await
+        .map(|_| ())
+        .map_err(|_| anyhow::anyhow!("notification consumer failed"))
 }
 
 async fn poll_research_review_jobs(pool: &PgPool, event_type: &str) -> Result<()> {

@@ -16,6 +16,7 @@ are not duplicated here.
 | Job ID | Registration owner | Body owner | Body | Trigger |
 | --- | --- | --- | --- | --- |
 | `research_review` | divi912 | shivanshrawat13aug2007-commits | `orion_worker::jobs::research_review::process_research_award` | `orion.research.elo_award.requested` |
+| `notification` | divi912 | divi912 | `orion_worker::jobs::notification::process_notification` | `orion.notification.requested` |
 
 Worker runtime semantics—claims, retries, dead-letter handling, shutdown, and
 observability—are shared execution concerns. The Phantom body owns research
@@ -28,6 +29,10 @@ The worker runtime polls outbox rows with a queued or due-retry execution
 state for registered triggers. It claims jobs through the durable execution
 columns and invokes the registered body; the transport `status` column is
 independent of this worker lifecycle.
+The notification adapter claims only `orion.notification.requested` rows and
+commits the inbox claim and notification upsert before acknowledging the
+outbox row. This keeps Redis delivery hints best-effort while making the
+PostgreSQL notification effect durable and idempotent.
 Running jobs older than `WORKER_RUNNING_LEASE_SECONDS` are moved through the
 same bounded retry path, so a process crash cannot leave a job running
 forever. `Ctrl-C` and `SIGTERM` stop polling and close the PostgreSQL pool
