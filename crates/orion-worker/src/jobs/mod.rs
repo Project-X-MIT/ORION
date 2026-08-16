@@ -1,3 +1,4 @@
+pub mod advanced_settlement;
 pub mod cache_rebuild;
 pub mod cleanup;
 pub mod news_ingest;

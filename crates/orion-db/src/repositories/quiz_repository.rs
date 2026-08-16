@@ -2,7 +2,10 @@ use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
 use crate::{
-    models::{QuizAttempt, QuizQuestionWithOptions, QuizSettlementInput, QuizSettlementResult},
+    models::{
+        QuizAttempt, QuizQuestion, QuizQuestionWithOptions, QuizSettlementInput,
+        QuizSettlementResult, QuizType,
+    },
     queries::{quiz_attempts, quiz_questions, ratings},
     transactions,
 };
@@ -39,6 +42,27 @@ impl QuizRepository {
         offset: i64,
     ) -> Result<Vec<QuizQuestionWithOptions>> {
         quiz_questions::advanced_questions_with_options(&self.pool, limit, offset).await
+    }
+
+    /// Returns only the active question rows for a cache-assisted page. The
+    /// per-question options/rating read can then be served from Redis without
+    /// making Redis authoritative for pagination.
+    pub async fn questions(
+        &self,
+        quiz_type: QuizType,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<QuizQuestion>> {
+        quiz_questions::list_by_type(&self.pool, quiz_type, limit, offset).await
+    }
+
+    /// Loads one authoritative question projection for a cache miss or
+    /// rebuild. PostgreSQL remains the source of truth for all fields.
+    pub async fn question_with_options(
+        &self,
+        question_id: Uuid,
+    ) -> Result<Option<QuizQuestionWithOptions>> {
+        quiz_questions::find_with_options(&self.pool, question_id).await
     }
 
     /// Settles one Basic Quiz attempt and all related rating changes in one

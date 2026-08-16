@@ -19,8 +19,9 @@ pub use notification::{NewNotification, Notification};
 pub use outbox::{OutboxEvent, OutboxJobStatus};
 pub use profile::{Profile, ProfileStatistics};
 pub use quiz_attempt::{
-    AdvancedSettlementInput, BasicSettlementInput, NewQuizAttempt, QuizAnswer, QuizAttempt,
-    QuizSettlementInput, QuizSettlementResult, ATTEMPT_COMPLETED, ATTEMPT_PENDING,
+    AdvancedSettlementInput, AdvancedSettlementResolution, BasicSettlementInput, NewQuizAttempt,
+    QuizAnswer, QuizAttempt, QuizSettlementInput, QuizSettlementResult, ATTEMPT_COMPLETED,
+    ATTEMPT_PENDING,
 };
 pub use quiz_question::{
     NewQuizOption, NewQuizQuestion, PublicQuizOption, QuizOption, QuizQuestion,
