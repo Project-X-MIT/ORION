@@ -84,8 +84,73 @@ services:
       - "5173:8080"
     networks: [backend, edge]
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/orion-rules.yml:/etc/prometheus/rules/orion.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    networks: [backend, edge]
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: orion-staging-grafana
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - "3300:3000"
+    networks: [backend, edge]
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ../monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    depends_on:
+      alert-receiver:
+        condition: service_started
+    ports:
+      - "9093:9093"
+    networks: [backend, edge]
+
+  alert-receiver:
+    image: python:3.13-alpine
+    profiles: [monitoring]
+    command: ["python", "/opt/orion/alert-receiver.py"]
+    volumes:
+      - ../monitoring/alert-receiver.py:/opt/orion/alert-receiver.py:ro
+    networks: [backend]
+
 volumes:
   postgres_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
 
 networks:
   backend:

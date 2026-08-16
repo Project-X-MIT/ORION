@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: orion-staging-webhook
+  group_by: [alertname, owner]
+  group_wait: 1s
+  group_interval: 1s
+  repeat_interval: 1h
+
+receivers:
+  - name: orion-staging-webhook
+    webhook_configs:
+      - url: http://alert-receiver:8081/alerts
+        send_resolved: true
