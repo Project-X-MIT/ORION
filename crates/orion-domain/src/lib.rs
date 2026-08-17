@@ -8,6 +8,7 @@ pub mod errors;
 pub mod events;
 pub mod identity;
 pub mod leaderboard;
+pub mod learning;
 pub mod profile;
 pub mod quiz;
 pub mod traits;

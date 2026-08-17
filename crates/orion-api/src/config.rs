@@ -42,6 +42,7 @@ pub struct AppConfig {
     pub bind_address: SocketAddr,
     pub database_url: String,
     pub redis_url: String,
+    pub discord_invite_url: Option<String>,
     pub database_max_connections: u32,
     pub session_ttl: Duration,
     pub session_cookie_secure: bool,
@@ -62,6 +63,10 @@ impl AppConfig {
                 })?;
         let database_url = required("DATABASE_URL")?;
         let redis_url = required("REDIS_URL")?;
+        let discord_invite_url = env::var("DISCORD_INVITE_URL")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         let database_max_connections = positive_u32("DATABASE_MAX_CONNECTIONS", 10)?;
         let session_ttl = Duration::from_secs(positive_u64("SESSION_TTL_SECONDS", 86_400)?);
         let session_cookie_secure = boolean(
@@ -99,6 +104,7 @@ impl AppConfig {
             bind_address,
             database_url,
             redis_url,
+            discord_invite_url,
             database_max_connections,
             session_ttl,
             session_cookie_secure,

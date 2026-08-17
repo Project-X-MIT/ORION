@@ -1,4 +1,10 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+
 const baseURL = process.env.RESEARCH_E2E_FRONTEND_URL ?? "http://127.0.0.1:5174";
+const viteCli = existsSync(resolve("node_modules/vite/bin/vite.js"))
+  ? "node_modules/vite/bin/vite.js"
+  : "../node_modules/vite/bin/vite.js";
 
 export default {
   testDir: "../tests/e2e",
@@ -17,7 +23,7 @@ export default {
   webServer: process.env.RESEARCH_E2E_FRONTEND_URL
     ? undefined
     : {
-        command: "node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5174",
+        command: `node ${viteCli} --host 127.0.0.1 --port 5174`,
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

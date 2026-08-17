@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import { LoginPage } from "../features/authentication/LoginPage";
 import { RegisterPage } from "../features/authentication/RegisterPage";
+import { DiscordConnect } from "../features/discord";
 import { LeaderboardPage } from "../features/leaderboard/LeaderboardPage";
+import { LearningPage, LessonPage } from "../features/learning";
 import { QuizPage } from "../features/quiz/QuizPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { useAuth } from "../providers/AuthProvider";
@@ -45,6 +47,9 @@ export function App() {
   if (path === "/register") return <PublicRoute><RegisterPage /></PublicRoute>;
   if (path === "/leaderboard") return <ProtectedRoute><LeaderboardPage /></ProtectedRoute>;
   if (path === "/quiz") return <ProtectedRoute><QuizPage /></ProtectedRoute>;
+  if (path === "/learning") return <ProtectedRoute><LearningPage /></ProtectedRoute>;
+  if (path.startsWith("/learning/lessons/")) return <ProtectedRoute><LessonPage /></ProtectedRoute>;
+  if (path === "/discord") return <DiscordConnect />;
   if (path === "/profile" || path.startsWith("/profiles/")) return <ProtectedRoute><ProfilePage userId={path.startsWith("/profiles/") ? path.slice("/profiles/".length) : user?.id} /></ProtectedRoute>;
   return <ProtectedRoute>
     <main>

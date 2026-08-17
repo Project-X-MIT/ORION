@@ -4,9 +4,6 @@
 //! These types describe the stable read/write boundary used by the API,
 //! cache, and repository adapters; they do not depend on Axum, SQLx, or Redis.
 //!
-//! TODO(Div): export this module from `orion-domain/src/lib.rs` when the
-//! shared domain module registry is updated.
-//!
 //! TODO(DIV-04..DIV-06): route registration and Redis key registration belong
 //! to Div; this module must not define route paths or cache-key authority.
 //!
@@ -1080,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn replayed_completion_preserves_the_persisted_timestamp() {
+    fn retried_completion_preserves_the_persisted_timestamp() {
         let course = Course {
             id: id(1),
             slug: BEGINNER_COURSE_SLUG.to_owned(),
@@ -1100,7 +1097,7 @@ mod tests {
             .complete_lesson(user_id, lesson_id, &[], first_at)
             .unwrap();
         let replay = course
-            .complete_lesson(user_id, lesson_id, &[first.clone()], second_at)
+            .complete_lesson(user_id, lesson_id, std::slice::from_ref(&first), second_at)
             .unwrap();
 
         assert_eq!(first.state, ProgressState::Completed);
