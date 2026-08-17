@@ -64,3 +64,35 @@ the evaluated/publication version from direct SQL writers, including changes
 that would otherwise leave `published_at` unchanged and bypass cache version
 checks. Rollback is forward-only; the trigger is removed only by a compensating
 migration after an explicit policy decision.
+
+Migration `202608160002_advanced_predictions.sql` is owned by the Advanced
+Quiz feature owner, with Div responsible for merge ordering. It adds the
+`advanced_predictions` table for exact numeric values accepted by the public
+Advanced endpoint while an attempt remains pending. The primary key prevents
+duplicate question rows for one attempt, and the question/submitted-time index
+supports worker lookup without making Redis authoritative. The compatibility
+window is additive: old option-based Advanced readers and writers remain
+compatible, while the numeric submission writer is deployed only with this
+migration. Rollback is forward-only: stop accepting numeric submissions and
+retain the rows for worker recovery; do not delete accepted predictions or
+remove the table from a database that has recorded this migration.
+
+Migration `202608160003_advanced_question_contract.sql` is owned by the
+Advanced Quiz feature owner, with Div responsible for merge ordering. It adds
+the nullable immutable value, calendar, horizon, expiry, and provider-key
+projection used by numeric Advanced questions. The all-or-none constraint
+keeps existing option-shaped questions compatible, and the horizon index
+supports pending-worker lookup. Rollback is forward-only: stop publishing new
+numeric questions and retain the recorded columns; do not remove facts used by
+the settlement audit path.
+
+Migration `202608160004_advanced_actual_values.sql` is owned by the provider
+ingestion/Advanced Quiz boundary, with Div responsible for merge ordering. It
+adds the PostgreSQL-authoritative provider handoff keyed by question, including
+exact value, observation/availability timestamps, source metadata, finality,
+and a ready-value index. The worker reads this table only after the question
+contract is loaded. The compatibility window is additive: old workers ignore
+the table, while the Advanced settlement worker is promoted only after the
+ingestion writer and migration are deployed. Rollback is forward-only: stop
+ingestion and leave the handoff rows available for recovery; never rebuild
+ratings from Redis or delete accepted provider facts.

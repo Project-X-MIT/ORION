@@ -11,9 +11,6 @@ import {
 } from "./types";
 import "./LearningPage.css";
 
-// TODO(Div): mount this feature at `/learning` after the shared route registry
-// and the approved learning API registration are available.
-
 type LearningPageProps = Readonly<{
   courseId?: string;
 }>;

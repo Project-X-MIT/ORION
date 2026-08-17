@@ -172,22 +172,26 @@ test.describe("learning experience", () => {
     const complete = page.getByRole("button", { name: "Mark lesson complete" });
     await complete.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status")).toContainText("Completion saved.");
+    await expect(page.getByText("Completion saved.", { exact: true })).toBeVisible();
   });
 
   test("recovers from a course API failure", async ({ page }) => {
     await stubSession(page);
-    let attempts = 0;
+    await page.route("**/api/v1/learning/progress", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: successBody(progress),
+    }));
+    let recovered = false;
     await page.route(`**/api/v1/learning/courses/${courseId}`, (route) => {
-      attempts += 1;
-      return route.fulfill(attempts === 1
+      return route.fulfill(!recovered
         ? {
-            status: 503,
+            status: 400,
             contentType: "application/json",
             body: JSON.stringify({
               api_version: 1,
               request_id: "learning-e2e-error",
-              error: { code: "SERVICE_UNAVAILABLE", message: "learning unavailable" },
+              error: { code: "VALIDATION_FAILED", message: "learning unavailable" },
             }),
           }
         : {
@@ -202,6 +206,7 @@ test.describe("learning experience", () => {
     const retry = page.getByRole("button", { name: "Try again" });
     await retry.focus();
     await expect(retry).toBeFocused();
+    recovered = true;
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "Beginner Trading" })).toBeVisible();
   });

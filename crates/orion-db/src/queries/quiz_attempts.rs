@@ -1,7 +1,7 @@
 use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
-use crate::models::{NewQuizAttempt, QuizAttempt, ATTEMPT_PENDING};
+use crate::models::{AdvancedPredictionRecord, NewQuizAttempt, QuizAttempt, ATTEMPT_PENDING};
 
 const ATTEMPT_BY_ID: &str = r#"
     SELECT
@@ -271,6 +271,23 @@ pub async fn find_pending_advanced_by_id(
         .bind(user_id)
         .fetch_optional(pool)
         .await
+}
+
+/// Loads the exact numeric predictions associated with one pending attempt.
+/// PostgreSQL is authoritative; this is the worker's DB-02 handoff surface.
+pub async fn advanced_predictions_by_attempt_id(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<Vec<AdvancedPredictionRecord>> {
+    sqlx::query_as::<_, AdvancedPredictionRecord>(
+        "SELECT attempt_id, question_id, value, submitted_at
+         FROM advanced_predictions
+         WHERE attempt_id = $1
+         ORDER BY question_id ASC",
+    )
+    .bind(attempt_id)
+    .fetch_all(pool)
+    .await
 }
 
 /// Returns a user's completed attempts, newest completion first.

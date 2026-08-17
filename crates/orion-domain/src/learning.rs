@@ -4,9 +4,6 @@
 //! These types describe the stable read/write boundary used by the API,
 //! cache, and repository adapters; they do not depend on Axum, SQLx, or Redis.
 //!
-//! TODO(Div): export this module from `orion-domain/src/lib.rs` when the
-//! shared domain module registry is updated.
-//!
 //! TODO(DIV-04..DIV-06): route registration and Redis key registration belong
 //! to Div; this module must not define route paths or cache-key authority.
 //!

@@ -27,6 +27,36 @@ pub const EVENT_CONTRACTS: &[EventContractSpec] = &[
         current_version: NotificationRequestedV1::SCHEMA_VERSION,
         minimum_supported_version: 1,
     },
+    EventContractSpec {
+        event_type: "orion.leaderboard.snapshot.completed",
+        owner: "ShauryaBijalwan",
+        current_version: 1,
+        minimum_supported_version: 1,
+    },
+    EventContractSpec {
+        event_type: AdvancedSubmissionRequestedV1::EVENT_TYPE,
+        owner: "akaidk",
+        current_version: AdvancedSubmissionRequestedV1::SCHEMA_VERSION,
+        minimum_supported_version: 1,
+    },
+    EventContractSpec {
+        event_type: AdvancedSettlementCompletedV1::EVENT_TYPE,
+        owner: "akaidk",
+        current_version: AdvancedSettlementCompletedV1::SCHEMA_VERSION,
+        minimum_supported_version: 1,
+    },
+    EventContractSpec {
+        event_type: AdvancedCacheInvalidationRequestedV1::EVENT_TYPE,
+        owner: "akaidk",
+        current_version: AdvancedCacheInvalidationRequestedV1::SCHEMA_VERSION,
+        minimum_supported_version: 1,
+    },
+    EventContractSpec {
+        event_type: AdvancedSettlementDeadLetteredV1::EVENT_TYPE,
+        owner: "akaidk",
+        current_version: AdvancedSettlementDeadLetteredV1::SCHEMA_VERSION,
+        minimum_supported_version: 1,
+    },
 ];
 
 #[must_use]
@@ -140,5 +170,67 @@ pub struct NotificationRequestedV1 {
 
 impl VersionedEvent for NotificationRequestedV1 {
     const EVENT_TYPE: &'static str = "orion.notification.requested";
+    const SCHEMA_VERSION: u16 = 1;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvancedSubmissionRequestedV1 {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub question_ids: Vec<Uuid>,
+    pub dedupe_key: String,
+}
+
+impl VersionedEvent for AdvancedSubmissionRequestedV1 {
+    const EVENT_TYPE: &'static str = "orion.quiz.advanced.submitted";
+    const SCHEMA_VERSION: u16 = 1;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvancedRatingEventV1 {
+    pub event_id: Uuid,
+    pub question_id: Uuid,
+    pub correct: bool,
+    pub rating_delta: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvancedSettlementCompletedV1 {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub status: String,
+    pub rating_after: i32,
+    pub events: Vec<AdvancedRatingEventV1>,
+    pub dedupe_key: String,
+}
+
+impl VersionedEvent for AdvancedSettlementCompletedV1 {
+    const EVENT_TYPE: &'static str = "orion.quiz.advanced.settled";
+    const SCHEMA_VERSION: u16 = 1;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvancedCacheInvalidationRequestedV1 {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub question_ids: Vec<Uuid>,
+    pub dedupe_key: String,
+}
+
+impl VersionedEvent for AdvancedCacheInvalidationRequestedV1 {
+    const EVENT_TYPE: &'static str = "orion.quiz.cache.invalidate";
+    const SCHEMA_VERSION: u16 = 1;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvancedSettlementDeadLetteredV1 {
+    pub attempt_id: Uuid,
+    pub user_id: Uuid,
+    pub reason: String,
+    pub dedupe_key: String,
+}
+
+impl VersionedEvent for AdvancedSettlementDeadLetteredV1 {
+    const EVENT_TYPE: &'static str = "orion.quiz.advanced.settlement.dead_lettered";
     const SCHEMA_VERSION: u16 = 1;
 }

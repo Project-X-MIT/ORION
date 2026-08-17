@@ -1,0 +1,13 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000070",
+  "event_type": "orion.quiz.advanced.settlement.dead_lettered",
+  "schema_version": 1,
+  "occurred_at": "2026-08-16T12:05:00Z",
+  "producer": "orion-worker",
+  "payload": {
+    "attempt_id": "00000000-0000-0000-0000-000000000041",
+    "user_id": "00000000-0000-0000-0000-000000000042",
+    "reason": "provider_terminal_failure",
+    "dedupe_key": "advanced-settlement:00000000-0000-0000-0000-000000000041:dead-letter"
+  }
+}

@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use axum::{
     body::to_bytes,
@@ -12,10 +13,15 @@ use chrono::{DateTime, Utc};
 use orion_common::{ErrorCode, MAX_PAGE_SIZE};
 use orion_db::{
     error::DatabaseError,
-    models::{QuizAnswer, QuizAttempt, QuizQuestionWithOptions, QuizSettlementInput, QuizType},
+    models::{
+        AdvancedPredictionSubmission, AdvancedPredictionSubmissionInput, AdvancedSubmissionResult,
+        QuizAnswer, QuizAttempt, QuizQuestionWithOptions, QuizSettlementInput,
+        QuizSettlementResult, QuizType,
+    },
     repositories::QuizRepository,
 };
 use orion_redis::cache::question::{CachedQuestion, QuestionCache};
+use rust_decimal::Decimal;
 use serde::{
     de::{DeserializeOwned, IgnoredAny},
     Deserialize, Serialize,
@@ -83,6 +89,7 @@ pub struct BasicQuestionResponse {
     pub id: Uuid,
     pub category: String,
     pub question_text: String,
+    pub input_type: &'static str,
     pub options: Vec<BasicOptionResponse>,
 }
 
@@ -95,10 +102,17 @@ pub struct BasicOptionResponse {
 
 impl From<QuizQuestionWithOptions> for BasicQuestionResponse {
     fn from(value: QuizQuestionWithOptions) -> Self {
+        let input_type =
+            if value.question.quiz_type == QuizType::ADVANCED && value.options.is_empty() {
+                "numeric"
+            } else {
+                "mcq"
+            };
         Self {
             id: value.question.id,
             category: value.question.category,
             question_text: value.question.question_text,
+            input_type,
             options: value
                 .options
                 .into_iter()
@@ -114,10 +128,16 @@ impl From<QuizQuestionWithOptions> for BasicQuestionResponse {
 
 impl From<CachedQuestion> for BasicQuestionResponse {
     fn from(value: CachedQuestion) -> Self {
+        let input_type = if value.quiz_type == QuizType::ADVANCED && value.options.is_empty() {
+            "numeric"
+        } else {
+            "mcq"
+        };
         Self {
             id: value.id,
             category: value.category,
             question_text: value.question_text,
+            input_type,
             options: value
                 .options
                 .into_iter()
@@ -220,8 +240,10 @@ struct AdvancedSubmitRequest {
 #[serde(deny_unknown_fields)]
 struct AdvancedPredictionRequest {
     question_id: Uuid,
-    #[serde(alias = "selected_option_id")]
-    option_id: Uuid,
+    #[serde(default, alias = "selected_option_id")]
+    option_id: Option<Uuid>,
+    #[serde(default)]
+    value: Option<String>,
     #[serde(rename = "score", alias = "correct_answers", default)]
     _score: Option<IgnoredAny>,
     #[serde(rename = "outcome", alias = "correct", alias = "is_correct", default)]
@@ -254,6 +276,12 @@ struct AdvancedSubmissionResponse {
     attempt: BasicAttemptResponse,
     rating: BasicRatingResponse,
     predictions: Vec<BasicAnswerResultResponse>,
+}
+
+#[derive(Debug)]
+enum AdvancedSubmissionInput {
+    Immediate(QuizSettlementInput),
+    Pending(AdvancedPredictionSubmissionInput),
 }
 
 #[derive(Debug, Serialize)]
@@ -483,15 +511,49 @@ async fn submit_advanced_attempt(
     QuizJson(request): QuizJson<AdvancedSubmitRequest>,
 ) -> Result<impl IntoResponse, ApiProblem> {
     let request_id = request_id(&headers);
-    let input = advanced_settlement_input(request, user.user.id, request_id)?;
     let repository = QuizRepository::new(state.db);
-    let result = repository
-        .settle_advanced(input)
-        .await
-        .map_err(|error| submission_database_problem(error, request_id, "Advanced"))?;
-    invalidate_question_caches(&state.redis, &result.events).await;
+    let response = match advanced_submission_input(request, user.user.id, request_id)? {
+        AdvancedSubmissionInput::Immediate(input) => {
+            let result = repository
+                .settle_advanced(input)
+                .await
+                .map_err(|error| submission_database_problem(error, request_id, "Advanced"))?;
+            invalidate_question_caches(&state.redis, &result.events).await;
+            advanced_response_from_settlement(result)
+        }
+        AdvancedSubmissionInput::Pending(input) => {
+            let result = repository
+                .submit_advanced_predictions(input)
+                .await
+                .map_err(|error| submission_database_problem(error, request_id, "Advanced"))?;
+            match result {
+                AdvancedSubmissionResult::Pending {
+                    attempt,
+                    user_rating,
+                } => AdvancedSubmissionResponse {
+                    attempt: BasicAttemptResponse::from(attempt),
+                    rating: BasicRatingResponse {
+                        rating: user_rating.rating,
+                        games_played: user_rating.games_played,
+                        wins: user_rating.wins,
+                        losses: user_rating.losses,
+                        draws: user_rating.draws,
+                    },
+                    predictions: Vec::new(),
+                },
+                AdvancedSubmissionResult::Completed(result) => {
+                    invalidate_question_caches(&state.redis, &result.events).await;
+                    advanced_response_from_settlement(result)
+                }
+            }
+        }
+    };
 
-    let response = AdvancedSubmissionResponse {
+    Ok(private_success(&headers, response))
+}
+
+fn advanced_response_from_settlement(result: QuizSettlementResult) -> AdvancedSubmissionResponse {
+    AdvancedSubmissionResponse {
         attempt: BasicAttemptResponse::from(result.attempt),
         rating: BasicRatingResponse {
             rating: result.user_rating.rating,
@@ -509,9 +571,7 @@ async fn submit_advanced_attempt(
                 rating_delta: event.rating_delta,
             })
             .collect(),
-    };
-
-    Ok(private_success(&headers, response))
+    }
 }
 
 /// Cache invalidation is a best-effort post-commit hint. The settlement and
@@ -619,11 +679,11 @@ fn settlement_input(
     })
 }
 
-fn advanced_settlement_input(
+fn advanced_submission_input(
     request: AdvancedSubmitRequest,
     user_id: Uuid,
     request_id: orion_common::RequestId,
-) -> Result<QuizSettlementInput, ApiProblem> {
+) -> Result<AdvancedSubmissionInput, ApiProblem> {
     if request.predictions.is_empty() {
         return Err(validation(
             request_id,
@@ -651,17 +711,103 @@ fn advanced_settlement_input(
         ));
     }
 
-    Ok(QuizSettlementInput {
-        attempt_id: request.attempt_id,
-        user_id,
-        answers: request
+    let has_option_predictions = request
+        .predictions
+        .iter()
+        .any(|prediction| prediction.option_id.is_some());
+    let has_numeric_predictions = request
+        .predictions
+        .iter()
+        .any(|prediction| prediction.value.is_some());
+
+    if has_option_predictions && has_numeric_predictions {
+        return Err(validation(
+            request_id,
+            "an Advanced submission cannot mix option and numeric predictions",
+        ));
+    }
+
+    if has_numeric_predictions {
+        let submitted_at = Utc::now();
+        let predictions = request
             .predictions
             .into_iter()
-            .map(|prediction| QuizAnswer::selected(prediction.question_id, prediction.option_id))
-            .collect(),
+            .map(|prediction| {
+                let value = prediction.value.ok_or_else(|| {
+                    validation(
+                        request_id,
+                        "every numeric Advanced prediction must contain a value",
+                    )
+                })?;
+                let value = Decimal::from_str(value.trim())
+                    .map_err(|_| {
+                        validation(
+                            request_id,
+                            "numeric Advanced predictions must be exact decimal values",
+                        )
+                    })?
+                    .normalize();
+                if value.scale() > 18 {
+                    return Err(validation(
+                        request_id,
+                        "numeric Advanced predictions support at most 18 fractional digits",
+                    ));
+                }
+                Ok(AdvancedPredictionSubmission {
+                    question_id: prediction.question_id,
+                    value,
+                    submitted_at,
+                })
+            })
+            .collect::<Result<Vec<_>, ApiProblem>>()?;
+        return Ok(AdvancedSubmissionInput::Pending(
+            AdvancedPredictionSubmissionInput {
+                attempt_id: request.attempt_id,
+                user_id,
+                predictions,
+                started_at,
+                request_id: Some(request_id.into_uuid()),
+            },
+        ));
+    }
+
+    let answers = request
+        .predictions
+        .into_iter()
+        .map(|prediction| {
+            prediction.option_id.map_or_else(
+                || {
+                    Err(validation(
+                        request_id,
+                        "each option Advanced prediction must contain an option id",
+                    ))
+                },
+                |option_id| Ok(QuizAnswer::selected(prediction.question_id, option_id)),
+            )
+        })
+        .collect::<Result<Vec<_>, ApiProblem>>()?;
+    Ok(AdvancedSubmissionInput::Immediate(QuizSettlementInput {
+        attempt_id: request.attempt_id,
+        user_id,
+        answers,
         started_at,
         completed_at,
-    })
+    }))
+}
+
+#[cfg(test)]
+fn advanced_settlement_input(
+    request: AdvancedSubmitRequest,
+    user_id: Uuid,
+    request_id: orion_common::RequestId,
+) -> Result<QuizSettlementInput, ApiProblem> {
+    match advanced_submission_input(request, user_id, request_id)? {
+        AdvancedSubmissionInput::Immediate(input) => Ok(input),
+        AdvancedSubmissionInput::Pending(_) => Err(validation(
+            request_id,
+            "numeric Advanced predictions are accepted as pending submissions",
+        )),
+    }
 }
 
 fn submission_timestamps(
@@ -826,9 +972,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        advanced_settlement_input, database_problem, settlement_input, submission_database_problem,
-        submission_timestamps, AdvancedSubmitRequest, BasicOptionResponse, BasicQuestionResponse,
-        BasicSubmitRequest,
+        advanced_settlement_input, advanced_submission_input, database_problem, settlement_input,
+        submission_database_problem, submission_timestamps, AdvancedSubmissionInput,
+        AdvancedSubmitRequest, BasicOptionResponse, BasicQuestionResponse, BasicSubmitRequest,
     };
 
     #[test]
@@ -837,6 +983,7 @@ mod tests {
             id: uuid::Uuid::from_u128(1),
             category: "science".to_owned(),
             question_text: "What is water?".to_owned(),
+            input_type: "mcq",
             options: vec![BasicOptionResponse {
                 id: uuid::Uuid::from_u128(2),
                 option_text: "H2O".to_owned(),
@@ -899,6 +1046,50 @@ mod tests {
         assert_eq!(advanced_input.answers.len(), 1);
         assert_eq!(advanced_input.answers[0].question_id, question_id);
         assert_eq!(advanced_input.answers[0].option_id, Some(option_id));
+    }
+
+    #[test]
+    fn numeric_advanced_predictions_are_preserved_as_pending_exact_decimals() {
+        let attempt_id = uuid::Uuid::from_u128(11);
+        let question_id = uuid::Uuid::from_u128(12);
+        let user_id = uuid::Uuid::from_u128(13);
+        let request_id = orion_common::RequestId::from_uuid(uuid::Uuid::from_u128(14));
+        let request: AdvancedSubmitRequest = serde_json::from_value(json!({
+            "attempt_id": attempt_id,
+            "predictions": [{
+                "question_id": question_id,
+                "value": "001.2300"
+            }]
+        }))
+        .expect("numeric prediction deserializes");
+
+        let AdvancedSubmissionInput::Pending(input) =
+            advanced_submission_input(request, user_id, request_id)
+                .expect("numeric prediction becomes pending")
+        else {
+            panic!("numeric prediction must not settle in the API");
+        };
+        assert_eq!(input.attempt_id, attempt_id);
+        assert_eq!(input.predictions[0].question_id, question_id);
+        assert_eq!(input.predictions[0].value.to_string(), "1.23");
+    }
+
+    #[test]
+    fn numeric_advanced_predictions_reject_binary_or_overprecise_values() {
+        let request: AdvancedSubmitRequest = serde_json::from_value(json!({
+            "attempt_id": uuid::Uuid::from_u128(21),
+            "predictions": [{
+                "question_id": uuid::Uuid::from_u128(22),
+                "value": "1.1234567890123456789"
+            }]
+        }))
+        .expect("numeric prediction deserializes");
+        let request_id = orion_common::RequestId::from_uuid(uuid::Uuid::from_u128(23));
+
+        let problem = advanced_submission_input(request, uuid::Uuid::from_u128(24), request_id)
+            .expect_err("values above the exact precision limit are rejected");
+        assert_eq!(problem.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(problem.code, ErrorCode::ValidationFailed);
     }
 
     #[test]

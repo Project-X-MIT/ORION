@@ -15,6 +15,7 @@ pub struct WorkerJobSpec {
 
 pub const RESEARCH_REVIEW_JOB_ID: &str = "research_review";
 pub const NOTIFICATION_JOB_ID: &str = "notification";
+pub const ADVANCED_SETTLEMENT_JOB_ID: &str = "advanced_settlement";
 
 // Registry metadata is platform-owned; feature modules own the referenced
 // bodies and may add fixtures without changing scheduler execution semantics.
@@ -32,6 +33,13 @@ pub const WORKER_JOB_REGISTRY: &[WorkerJobSpec] = &[
         body_owner: "divi912",
         body_path: "orion_worker::jobs::notification::process_notification",
         trigger: "orion.notification.requested",
+    },
+    WorkerJobSpec {
+        id: ADVANCED_SETTLEMENT_JOB_ID,
+        registry_owner: "divi912",
+        body_owner: "akaidk",
+        body_path: "orion_worker::jobs::advanced_settlement::process_advanced_submission_event",
+        trigger: "orion.quiz.advanced.submitted",
     },
 ];
 
@@ -55,6 +63,18 @@ mod tests {
             "orion_worker::jobs::research_review::process_research_award"
         );
         assert_eq!(job.trigger, "orion.research.elo_award.requested");
+    }
+
+    #[test]
+    fn advanced_settlement_job_is_registered_with_its_typed_trigger() {
+        let job = worker_job("advanced_settlement").expect("Advanced job should be registered");
+        assert_eq!(job.registry_owner, "divi912");
+        assert_eq!(job.body_owner, "akaidk");
+        assert_eq!(
+            job.body_path,
+            "orion_worker::jobs::advanced_settlement::process_advanced_submission_event"
+        );
+        assert_eq!(job.trigger, "orion.quiz.advanced.submitted");
     }
 
     #[test]

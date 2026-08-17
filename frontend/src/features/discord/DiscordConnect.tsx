@@ -1,8 +1,16 @@
+import { useEffect, useState } from "react";
+
 import { loadAppConfig } from "../../app/config";
+import { apiClient } from "../../shared/api/client";
 
 import "./DiscordConnect.css";
 
 const DISCORD_HOSTS = new Set(["discord.gg", "discord.com"]);
+const DISCORD_INVITE_TOKEN = /^[A-Za-z0-9_-]+$/;
+
+type DiscordInviteResponse = Readonly<{
+  invite_url: string | null;
+}>;
 
 /**
  * Accept only an HTTPS Discord invite. Credentials, arbitrary hosts, and
@@ -18,13 +26,14 @@ export function safeDiscordInviteUrl(value: string | undefined): string | undefi
     return undefined;
   }
 
-  if (url.protocol !== "https:" || url.username || url.password) return undefined;
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return undefined;
   const host = url.hostname.toLowerCase();
   if (!DISCORD_HOSTS.has(host)) return undefined;
-  const approvedPath = host === "discord.com"
-    ? /^\/invite\/[^/]+$/i
-    : /^\/[^/]+$/;
-  if (!approvedPath.test(url.pathname)) return undefined;
+  const token = host === "discord.com"
+    ? url.pathname.replace(/^\/invite\//i, "")
+    : url.pathname.slice(1);
+  if (!url.pathname.startsWith(host === "discord.com" ? "/invite/" : "/")
+      || !DISCORD_INVITE_TOKEN.test(token)) return undefined;
 
   return url.toString();
 }
@@ -34,14 +43,42 @@ export type DiscordConnectProps = Readonly<{
 }>;
 
 export function DiscordConnect({ inviteUrl }: DiscordConnectProps = {}) {
-  const configuredInviteUrl = inviteUrl ?? loadAppConfig().discordInviteUrl;
+  const buildTimeInviteUrl = loadAppConfig().discordInviteUrl;
+  const [runtimeInviteUrl, setRuntimeInviteUrl] = useState<string | undefined>();
+  const [runtimeConfigLoaded, setRuntimeConfigLoaded] = useState(
+    Boolean(inviteUrl ?? buildTimeInviteUrl),
+  );
+
+  useEffect(() => {
+    if (inviteUrl !== undefined || buildTimeInviteUrl !== undefined) return undefined;
+
+    let mounted = true;
+    void apiClient
+      .get<DiscordInviteResponse>("/discord/invite")
+      .then((response) => {
+        if (!mounted) return;
+        setRuntimeInviteUrl(response.invite_url ?? undefined);
+        setRuntimeConfigLoaded(true);
+      })
+      .catch(() => {
+        if (mounted) setRuntimeConfigLoaded(true);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [buildTimeInviteUrl, inviteUrl]);
+
+  const configuredInviteUrl = inviteUrl ?? buildTimeInviteUrl ?? runtimeInviteUrl;
   const safeInviteUrl = safeDiscordInviteUrl(configuredInviteUrl);
 
   return (
-    <section aria-labelledby="discord-connect-title" className="discord-connect">
-      <h2 id="discord-connect-title">Join the ORION community</h2>
+    <main aria-labelledby="discord-connect-title" className="discord-connect">
+      <h1 id="discord-connect-title">Join the ORION community</h1>
       <p>Ask questions, share learning progress, and connect with other learners.</p>
-      {safeInviteUrl ? (
+      {!runtimeConfigLoaded ? (
+        <p role="status" aria-live="polite">Loading Discord community link…</p>
+      ) : safeInviteUrl ? (
         <a
           href={safeInviteUrl}
           referrerPolicy="no-referrer"
@@ -53,9 +90,10 @@ export function DiscordConnect({ inviteUrl }: DiscordConnectProps = {}) {
       ) : (
         <p role="status">The Discord community link is not available right now.</p>
       )}
-    </section>
+    </main>
   );
 }
 
-// TODO(Div): expose the approved runtime configuration field through the
-// shared configuration registry when the frontend registry is registered.
+// The approved invite is supplied by the server-side configuration registry
+// (with a build-time local-development fallback) and is validated again before
+// it reaches an anchor element.

@@ -1,0 +1,22 @@
+{
+  "event_id": "00000000-0000-0000-0000-000000000050",
+  "event_type": "orion.quiz.advanced.settled",
+  "schema_version": 1,
+  "occurred_at": "2026-08-16T12:01:00Z",
+  "producer": "orion-worker",
+  "payload": {
+    "attempt_id": "00000000-0000-0000-0000-000000000041",
+    "user_id": "00000000-0000-0000-0000-000000000042",
+    "status": "completed",
+    "rating_after": 1530,
+    "events": [
+      {
+        "event_id": "00000000-0000-0000-0000-000000000051",
+        "question_id": "00000000-0000-0000-0000-000000000043",
+        "correct": true,
+        "rating_delta": 30
+      }
+    ],
+    "dedupe_key": "advanced-settlement:00000000-0000-0000-0000-000000000041"
+  }
+}

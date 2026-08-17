@@ -4,10 +4,6 @@
 //! progress is never part of the cache payload; PostgreSQL remains the sole
 //! authority for progress reads and writes.
 //!
-//! TODO(Div): export this module from `cache/mod.rs` after the shared cache
-//! module registry is updated. The `cache.learning_course` key itself is
-//! already registered by Div.
-
 use chrono::{DateTime, Duration, Utc};
 use orion_domain::learning::{ContentLifecycle, Course, LearningContractError};
 use serde::{Deserialize, Serialize};

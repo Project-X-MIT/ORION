@@ -20,7 +20,12 @@ pub async fn claim_batch(
             WHERE status = 'pending'
               -- Registered feature jobs own their typed consumer adapters;
               -- the generic dispatcher must never mark them complete.
-              AND event_type NOT IN ('orion.research.elo_award.requested', 'orion.notification.requested')
+              AND event_type NOT IN (
+                  'orion.research.elo_award.requested',
+                  'orion.notification.requested',
+                  'orion.leaderboard.snapshot.completed',
+                  'orion.quiz.advanced.submitted'
+              )
               AND (job_status IN ('queued','retry') AND (job_next_retry_at IS NULL OR job_next_retry_at <= CURRENT_TIMESTAMP)
                    OR job_status = 'running' AND lease_until < CURRENT_TIMESTAMP)
             ORDER BY created_at, id LIMIT $1 FOR UPDATE SKIP LOCKED

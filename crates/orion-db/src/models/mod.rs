@@ -1,3 +1,4 @@
+pub mod advanced_actual;
 pub mod leaderboard;
 pub mod learning;
 pub mod news;
@@ -10,6 +11,7 @@ pub mod rating;
 pub mod research;
 pub mod user;
 
+pub use advanced_actual::AdvancedActualRecord;
 pub use leaderboard::{LeaderboardEntry, LeaderboardRankHistory};
 pub use learning::{
     CourseCompletion, CourseLesson, CourseModule, CourseProgress, ModuleCompletion,
@@ -17,15 +19,16 @@ pub use learning::{
 pub use news::{NewsArticle, NewsFeedArticle, NewsIngestionRun, NewsSource};
 pub use notification::{NewNotification, Notification};
 pub use outbox::{OutboxEvent, OutboxJobStatus};
-pub use profile::{Profile, ProfileStatistics};
+pub use profile::{Profile, ProfilePerformanceRow, ProfileStatistics, PublishedProfileResearchRow};
 pub use quiz_attempt::{
-    AdvancedSettlementInput, AdvancedSettlementResolution, BasicSettlementInput, NewQuizAttempt,
-    QuizAnswer, QuizAttempt, QuizSettlementInput, QuizSettlementResult, ATTEMPT_COMPLETED,
-    ATTEMPT_PENDING,
+    AdvancedPredictionRecord, AdvancedPredictionSubmission, AdvancedPredictionSubmissionInput,
+    AdvancedSettlementInput, AdvancedSettlementResolution, AdvancedSubmissionResult,
+    BasicSettlementInput, NewQuizAttempt, QuizAnswer, QuizAttempt, QuizSettlementInput,
+    QuizSettlementResult, ATTEMPT_COMPLETED, ATTEMPT_PENDING,
 };
 pub use quiz_question::{
-    NewQuizOption, NewQuizQuestion, PublicQuizOption, QuizOption, QuizQuestion,
-    QuizQuestionWithOptions, QuizType,
+    AdvancedQuestionContract, NewQuizOption, NewQuizQuestion, PublicQuizOption, QuizOption,
+    QuizQuestion, QuizQuestionWithOptions, QuizType,
 };
 pub use rating::{QuestionRating, RatingEvent, RatingLedgerEntry, UserRating, DEFAULT_RATING};
 pub use research::{

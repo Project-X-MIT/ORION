@@ -31,3 +31,28 @@ pub struct ProfileStatistics {
     pub quizzes_completed: i64,
     pub correct_answers: i64,
 }
+
+/// A completed quiz observation used by the public performance chart.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct ProfilePerformanceRow {
+    pub completed_at: DateTime<Utc>,
+    pub quiz_type: String,
+    pub total_questions: i32,
+    pub correct_answers: i32,
+    pub score: i32,
+    pub rating_after: i32,
+}
+
+/// The deliberately small public projection of a published research paper.
+/// Content and reviewer/evaluation payloads are not selected here.
+#[derive(Debug, Clone, PartialEq, FromRow)]
+pub struct PublishedProfileResearchRow {
+    pub id: Uuid,
+    pub title: String,
+    pub abstract_text: String,
+    pub published_at: DateTime<Utc>,
+    pub evaluation_score: Option<f64>,
+    pub evaluated_content_version: Option<i32>,
+    pub elo_award: Option<i32>,
+    pub elo_awarded: bool,
+}

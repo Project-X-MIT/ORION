@@ -2,7 +2,9 @@ use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
 use crate::{
-    models::{Profile, ProfileStatistics},
+    models::{
+        Profile, ProfilePerformanceRow, ProfileStatistics, PublishedProfileResearchRow, RatingEvent,
+    },
     queries::profile,
 };
 
@@ -37,9 +39,37 @@ impl ProfileRepository {
         profile::current_elo_by_user_id(&self.pool, user_id).await
     }
 
+    pub async fn active_user_exists(&self, user_id: Uuid) -> Result<bool> {
+        profile::active_user_exists(&self.pool, user_id).await
+    }
+
     /// Returns the user's global rank, if rating data exists.
     pub async fn current_rank_by_user_id(&self, user_id: Uuid) -> Result<Option<i64>> {
         profile::current_rank_by_user_id(&self.pool, user_id).await
+    }
+
+    pub async fn rating_history_by_user_id(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<RatingEvent>> {
+        profile::rating_history_by_user_id(&self.pool, user_id, limit).await
+    }
+
+    pub async fn performance_history_by_user_id(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<ProfilePerformanceRow>> {
+        profile::performance_history_by_user_id(&self.pool, user_id, limit).await
+    }
+
+    pub async fn published_research_by_user_id(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<PublishedProfileResearchRow>> {
+        profile::published_research_by_user_id(&self.pool, user_id, limit).await
     }
 
     pub fn pool(&self) -> &PgPool {

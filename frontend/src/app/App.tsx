@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 
 import { LoginPage } from "../features/authentication/LoginPage";
 import { RegisterPage } from "../features/authentication/RegisterPage";
+import { DiscordConnect } from "../features/discord";
+import { LeaderboardPage } from "../features/leaderboard/LeaderboardPage";
+import { LearningPage, LessonPage } from "../features/learning";
+import { QuizPage } from "../features/quiz/QuizPage";
+import { ProfilePage } from "../features/profile/ProfilePage";
 import { useAuth } from "../providers/AuthProvider";
 import { ProtectedRoute } from "../routes/ProtectedRoute";
 import { PublicRoute } from "../routes/PublicRoute";
@@ -18,7 +23,7 @@ function usePathname() {
 
 export function App() {
   const path = usePathname();
-  const { status, user, error, logout, refresh } = useAuth();
+  const { status, user, bootstrapError, logout, refresh } = useAuth();
 
   if (status === "loading") {
     return (
@@ -28,11 +33,11 @@ export function App() {
     );
   }
 
-  if (error) {
+  if (bootstrapError) {
     return (
       <main role="alert">
         <h1>We could not load ORION</h1>
-        <p>{error}</p>
+        <p>{bootstrapError}</p>
         <button type="button" onClick={() => void refresh()}>Try again</button>
       </main>
     );
@@ -40,6 +45,12 @@ export function App() {
 
   if (path === "/login") return <PublicRoute><LoginPage /></PublicRoute>;
   if (path === "/register") return <PublicRoute><RegisterPage /></PublicRoute>;
+  if (path === "/leaderboard") return <ProtectedRoute><LeaderboardPage /></ProtectedRoute>;
+  if (path === "/quiz") return <ProtectedRoute><QuizPage /></ProtectedRoute>;
+  if (path === "/learning") return <ProtectedRoute><LearningPage /></ProtectedRoute>;
+  if (path.startsWith("/learning/lessons/")) return <ProtectedRoute><LessonPage /></ProtectedRoute>;
+  if (path === "/discord") return <DiscordConnect />;
+  if (path === "/profile" || path.startsWith("/profiles/")) return <ProtectedRoute><ProfilePage userId={path.startsWith("/profiles/") ? path.slice("/profiles/".length) : user?.id} /></ProtectedRoute>;
   return <ProtectedRoute>
     <main>
       <h1>Welcome to ORION{user ? `, ${user.display_name ?? user.username}` : ""}</h1>

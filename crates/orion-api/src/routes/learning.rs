@@ -4,9 +4,6 @@
 //! repository; Redis is used only as a disposable cache for published course
 //! content and never for progress state.
 //!
-//! TODO(Div): mount [`router`] under `/api/v1/learning` and register the
-//! operation metadata in the shared API registry.
-//!
 //! TODO(DB-01/Product): the DB-05 baseline has no `courses` table. The route
 //! currently accepts only the reserved `BEGINNER_COURSE_ID`; replace that
 //! provisional constant with the approved course-table identity when it lands.
@@ -44,7 +41,7 @@ const COURSE_TITLE: &str = "Beginner Trading";
 const COURSE_DESCRIPTION: &str =
     "A deterministic beginner course for learning trading fundamentals.";
 
-/// Isolated learning routes. Application mounting remains Div-owned.
+/// Learning routes mounted by the application at `/api/v1/learning`.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/courses/{course_id}", get(get_course))
@@ -134,7 +131,7 @@ async fn get_course(
         load_domain_course(&repository, course_id, request_id).await
     })
     .await
-        .map_err(|error| learning_route_problem(error, request_id))?;
+    .map_err(|error| learning_route_problem(error, request_id))?;
 
     if !cache_hit {
         // The cache module revalidates publication and rejects progress-bearing
@@ -692,12 +689,11 @@ mod tests {
     async fn redis_outage_falls_back_to_the_authoritative_loader() {
         let loaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let loaded_by_db = std::sync::Arc::clone(&loaded);
-        let result: Result<(u32, bool), &str> =
-            load_after_cache_read(Err(()), || async move {
-                loaded_by_db.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(42)
-            })
-            .await;
+        let result: Result<(u32, bool), &str> = load_after_cache_read(Err(()), || async move {
+            loaded_by_db.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(42)
+        })
+        .await;
 
         assert_eq!(result, Ok((42, false)));
         assert!(loaded.load(std::sync::atomic::Ordering::SeqCst));

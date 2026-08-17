@@ -1,7 +1,10 @@
 use sqlx::{PgPool, Result};
 use uuid::Uuid;
 
-use crate::models::{NewQuizQuestion, QuizOption, QuizQuestion, QuizQuestionWithOptions, QuizType};
+use crate::models::{
+    AdvancedQuestionContract, NewQuizQuestion, QuizOption, QuizQuestion, QuizQuestionWithOptions,
+    QuizType,
+};
 
 const QUESTION_BY_ID: &str = r#"
     SELECT
@@ -164,6 +167,49 @@ pub async fn advanced_questions(
     offset: i64,
 ) -> Result<Vec<QuizQuestion>> {
     list_by_type(pool, QuizType::Advanced, limit, offset).await
+}
+
+/// Loads only complete, active Advanced question contracts. A missing
+/// contract is intentionally not converted into defaults; the worker must
+/// leave that attempt pending or dead-letter it as invalid configuration.
+pub async fn advanced_contracts_by_question_ids(
+    pool: &PgPool,
+    question_ids: &[Uuid],
+) -> Result<Vec<AdvancedQuestionContract>> {
+    if question_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    sqlx::query_as::<_, AdvancedQuestionContract>(
+        r#"
+        SELECT id,
+               advanced_unit_code AS unit_code,
+               advanced_currency_code AS currency_code,
+               advanced_value_scale AS value_scale,
+               advanced_market_calendar_id AS market_calendar_id,
+               advanced_market_calendar_version AS market_calendar_version,
+               advanced_market_timezone AS market_timezone,
+               advanced_horizon_at AS horizon_at,
+               advanced_expires_at AS expires_at,
+               advanced_provider_key AS provider_key
+        FROM quiz_questions
+        WHERE id = ANY($1)
+          AND quiz_type = 'advanced'
+          AND active = TRUE
+          AND advanced_unit_code IS NOT NULL
+          AND advanced_value_scale IS NOT NULL
+          AND advanced_market_calendar_id IS NOT NULL
+          AND advanced_market_calendar_version IS NOT NULL
+          AND advanced_market_timezone IS NOT NULL
+          AND advanced_horizon_at IS NOT NULL
+          AND advanced_expires_at IS NOT NULL
+          AND advanced_provider_key IS NOT NULL
+        ORDER BY id ASC
+        "#,
+    )
+    .bind(question_ids)
+    .fetch_all(pool)
+    .await
 }
 
 /// Returns a random set of active questions for a quiz mode.

@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-// TODO(Div): enable after the Discord feature is mounted in the shared
-// application router and the approved runtime configuration is registered.
 const discordE2eEnabled = process.env.ORION_DISCORD_E2E_ENABLED === "1";
 const inviteUrl = "https://discord.gg/qXRjY4PPp";
 const viewports = [
@@ -14,12 +12,17 @@ const viewports = [
 test.describe("Discord community link", () => {
   test.skip(
     !discordE2eEnabled,
-    "Set ORION_DISCORD_E2E_ENABLED=1 after Div mounts the Discord feature and registers config.",
+    "Set ORION_DISCORD_E2E_ENABLED=1 to run the Discord browser checks.",
   );
 
   for (const viewport of viewports) {
-    test(`is keyboard accessible, protected, and responsive on ${viewport.name}`, async ({ page }) => {
+    test(`is keyboard accessible, safe, and responsive on ${viewport.name}`, async ({ page }) => {
       await page.setViewportSize(viewport);
+      await page.route("**/api/v1/auth/me*", (route) => route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "authentication required" }),
+      }));
       await page.goto("/discord");
 
       await expect(page.getByRole("heading", { name: "Join the ORION community" })).toBeVisible();

@@ -1,4 +1,5 @@
 pub mod advanced_settlement;
+pub mod advanced_submission;
 pub mod basic_settlement;
 pub mod event_consumer;
 pub mod leaderboard_snapshot;
@@ -11,10 +12,16 @@ pub use notification::{
     create_notification, list_notifications, mark_notification_read, mark_notification_unread,
     unread_notification_count,
 };
-pub use outbox::{write_outbox_event, write_outbox_event_with_context};
+pub use outbox::{
+    ensure_pending_event, mark_event_dispatched, write_outbox_event,
+    write_outbox_event_with_context,
+};
 
 pub use advanced_settlement::{
     settle_advanced_actual_quiz, settle_advanced_attempt, settle_advanced_quiz,
+};
+pub use advanced_submission::{
+    submit_advanced_predictions, ADVANCED_SUBMISSION_SCHEMA_VERSION, ADVANCED_SUBMITTED_EVENT_TYPE,
 };
 pub use basic_settlement::{settle_basic_attempt, settle_basic_quiz};
 pub use event_consumer::{

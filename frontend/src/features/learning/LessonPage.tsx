@@ -11,9 +11,6 @@ import {
 } from "./types";
 import "./LearningPage.css";
 
-// TODO(Div): mount this feature at `/learning/lessons/:lessonId` through the
-// shared route registry once the learning route contract is registered.
-
 type LessonPageProps = Readonly<{
   lessonId?: string;
   courseId?: string;
