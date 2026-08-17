@@ -6,16 +6,22 @@ describe("application configuration", () => {
   it("provides immutable local-development defaults", () => {
     const config = createAppConfig({});
 
-    expect(config).toEqual({ apiBaseUrl: "/api/v1", requestTimeoutMs: 15_000 });
+    expect(config).toEqual({
+      apiBaseUrl: "/api/v1",
+      discordInviteUrl: undefined,
+      requestTimeoutMs: 15_000,
+    });
     expect(Object.isFrozen(config)).toBe(true);
   });
 
   it("normalizes configured values", () => {
     expect(createAppConfig({
       VITE_API_BASE_URL: " https://api.orion.example/api/v1/// ",
+      VITE_DISCORD_INVITE_URL: " https://discord.gg/qXRjY4PPp ",
       VITE_API_REQUEST_TIMEOUT_MS: "2500",
     })).toEqual({
       apiBaseUrl: "https://api.orion.example/api/v1",
+      discordInviteUrl: "https://discord.gg/qXRjY4PPp",
       requestTimeoutMs: 2_500,
     });
   });

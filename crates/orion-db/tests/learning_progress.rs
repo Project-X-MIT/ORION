@@ -161,6 +161,40 @@ async fn concurrent_completion_replays_one_authoritative_progress_row() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retried_completion_after_an_ambiguous_write_is_idempotent() -> Result<(), Box<dyn Error>> {
+    let Some(database) = TestDatabase::create().await? else {
+        return Ok(());
+    };
+    let (user_id, _module_id, lesson_id) = seed_published_lesson(&database.pool).await?;
+    let repository = LearningRepository::new(database.pool.clone());
+
+    // A client may retry when the first response is lost after PostgreSQL
+    // committed. The repository upsert must make that replay safe.
+    let first = repository.complete_lesson(user_id, lesson_id).await?;
+    let replay = repository.complete_lesson(user_id, lesson_id).await?;
+
+    assert!(first.completed);
+    assert!(replay.completed);
+    assert_eq!(replay.completed_at, first.completed_at);
+
+    let row_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM course_progress
+         WHERE user_id = $1 AND lesson_id = $2",
+    )
+    .bind(user_id)
+    .bind(lesson_id)
+    .fetch_one(&database.pool)
+    .await?;
+    assert_eq!(
+        row_count, 1,
+        "a retried completion must not duplicate progress"
+    );
+
+    database.cleanup().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn progress_survives_logout_redis_loss_and_another_device_read() -> Result<(), Box<dyn Error>>
 {
     let Some(database) = TestDatabase::create().await? else {

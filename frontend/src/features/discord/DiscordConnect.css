@@ -1,0 +1,21 @@
+.discord-connect {
+  border: 1px solid currentColor;
+  margin: 1rem 0;
+  max-width: 38rem;
+  padding: 1rem;
+}
+
+.discord-connect h2 {
+  margin-top: 0;
+}
+
+.discord-connect a {
+  align-items: center;
+  display: inline-flex;
+  min-height: 2.75rem;
+}
+
+.discord-connect a:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 3px;
+}

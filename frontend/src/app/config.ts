@@ -1,5 +1,6 @@
 export type AppConfig = Readonly<{
   apiBaseUrl: string;
+  discordInviteUrl: string | undefined;
   requestTimeoutMs: number;
 }>;
 
@@ -32,6 +33,7 @@ function parseRequestTimeout(value: string | undefined): number {
 export function createAppConfig(environment: AppEnvironment): AppConfig {
   return Object.freeze({
     apiBaseUrl: normalizeApiBaseUrl(environment.VITE_API_BASE_URL),
+    discordInviteUrl: environment.VITE_DISCORD_INVITE_URL?.trim() || undefined,
     requestTimeoutMs: parseRequestTimeout(environment.VITE_API_REQUEST_TIMEOUT_MS),
   });
 }

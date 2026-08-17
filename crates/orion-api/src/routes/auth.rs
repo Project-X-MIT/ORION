@@ -103,9 +103,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let request_id = request_id(&parts.headers);
-        let Some(session_id) = session_id_from_headers(&parts.headers) else {
-            return Err(unauthenticated(request_id));
-        };
+        let session_id = required_session_id(&parts.headers, request_id)?;
         let session = match state.sessions.load(session_id).await {
             Ok(Some(session)) => session,
             Ok(None) | Err(SessionStoreError::Expired) => return Err(unauthenticated(request_id)),
@@ -445,6 +443,13 @@ fn unauthenticated(request_id: orion_common::RequestId) -> ApiProblem {
     .with_request_id(request_id)
 }
 
+fn required_session_id(
+    headers: &HeaderMap,
+    request_id: orion_common::RequestId,
+) -> Result<Uuid, ApiProblem> {
+    session_id_from_headers(headers).ok_or_else(|| unauthenticated(request_id))
+}
+
 fn internal(request_id: orion_common::RequestId) -> ApiProblem {
     ApiProblem::new(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -466,12 +471,13 @@ fn rate_limited(request_id: orion_common::RequestId) -> ApiProblem {
 #[cfg(test)]
 mod tests {
     use super::{
-        hash_password, normalize_email, normalize_username, session_id_from_headers,
-        verify_password, AuthenticatedUser,
+        hash_password, normalize_email, normalize_username, required_session_id,
+        session_id_from_headers, verify_password, AuthenticatedUser,
     };
     use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
     use chrono::Utc;
     use orion_common::ErrorCode;
+    use orion_common::RequestId;
     use orion_db::models::User;
     use orion_domain::{Identity, Role, UserId};
     use uuid::Uuid;
@@ -557,5 +563,18 @@ mod tests {
             HeaderValue::from_static("orion_session=not-a-uuid"),
         );
         assert_eq!(session_id_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn missing_session_is_rejected_before_user_lookup() {
+        let headers = HeaderMap::new();
+        let request_id = RequestId::from_uuid(Uuid::from_u128(1));
+
+        let rejection = required_session_id(&headers, request_id)
+            .expect_err("a progress route must reject unauthenticated requests");
+
+        assert_eq!(rejection.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(rejection.code, ErrorCode::Unauthenticated);
+        assert_eq!(rejection.request_id, Some(request_id));
     }
 }
