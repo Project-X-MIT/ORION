@@ -7,10 +7,20 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const frontendDirectory = resolve(scriptDirectory, "..");
-const cliCandidates = [
-  resolve(frontendDirectory, "node_modules/@playwright/test/cli.js"),
-  resolve(frontendDirectory, "../node_modules/@playwright/test/cli.js"),
-];
+const workspaceDirectory = resolve(frontendDirectory, "..");
+const runsFrontendLocalTests = process.argv.some((argument) => {
+  const normalizedArgument = argument.replaceAll("\\", "/");
+  return normalizedArgument.includes("playwright.shared.config") || normalizedArgument.includes("tests/browser");
+});
+const cliCandidates = runsFrontendLocalTests
+  ? [
+      resolve(frontendDirectory, "node_modules/@playwright/test/cli.js"),
+      resolve(frontendDirectory, "../node_modules/@playwright/test/cli.js"),
+    ]
+  : [
+      resolve(frontendDirectory, "../node_modules/@playwright/test/cli.js"),
+      resolve(frontendDirectory, "node_modules/@playwright/test/cli.js"),
+    ];
 const cliPath = cliCandidates.find((candidate) => {
   return existsSync(candidate);
 });
@@ -18,8 +28,8 @@ if (!cliPath) {
   throw new Error("Could not locate @playwright/test. Run npm install from the workspace root.");
 }
 const nodePath = [
+  resolve(workspaceDirectory, "node_modules"),
   resolve(frontendDirectory, "node_modules"),
-  resolve(frontendDirectory, "../node_modules"),
   process.env.NODE_PATH,
 ].filter(Boolean).join(delimiter);
 

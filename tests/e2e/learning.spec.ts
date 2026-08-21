@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-// TODO(Div): enable after `/learning` and `/learning/lessons/:lessonId` are
-// mounted in the shared application router and the learning API is registered.
 const learningE2eEnabled = process.env.ORION_LEARNING_E2E_ENABLED === "1";
 const courseId = "00000000-0000-0000-0000-000000000001";
 const viewports = [
@@ -115,7 +113,7 @@ async function expectAccessible(page: Page) {
 test.describe("learning experience", () => {
   test.skip(
     !learningE2eEnabled,
-    "Set ORION_LEARNING_E2E_ENABLED=1 after Div mounts the learning routes and registers the API.",
+    "Set ORION_LEARNING_E2E_ENABLED=1 when the live learning backend fixture is available.",
   );
 
   for (const viewport of viewports) {

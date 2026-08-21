@@ -8,5 +8,5 @@ export const options = {
 
 export default function () {
   const response = http.get(`${__ENV.ORION_BASE_URL || 'http://127.0.0.1:3000'}/api/v1/leaderboard?limit=100`);
-  check(response, { 'leaderboard responds': (value) => [200, 401, 404].includes(value.status) });
+  check(response, { 'leaderboard responds': (value) => value.status === 200 });
 }

@@ -22,7 +22,7 @@ use crate::{request_id, state::AppState, ApiProblem};
 
 const PUBLIC_CACHE_CONTROL: &str = "no-store";
 
-/// Public news-feed routes. Div must mount this router at `/api/v1/news`.
+/// Public news-feed routes mounted at `/api/v1/news`.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_feed))

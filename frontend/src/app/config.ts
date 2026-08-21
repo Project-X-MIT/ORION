@@ -12,8 +12,15 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 function normalizeApiBaseUrl(value: string | undefined): string {
   const baseUrl = value?.trim() || DEFAULT_API_BASE_URL;
 
-  if (!baseUrl.startsWith("/") && !URL.canParse(baseUrl)) {
+  const isRootRelative = baseUrl.startsWith("/") && !baseUrl.startsWith("//");
+  if (isRootRelative) return baseUrl.replace(/\/+$/, "");
+
+  if (!URL.canParse(baseUrl)) {
     throw new Error("VITE_API_BASE_URL must be an absolute URL or a root-relative path");
+  }
+  const parsed = new URL(baseUrl);
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error("VITE_API_BASE_URL must use http(s) without credentials");
   }
 
   return baseUrl.replace(/\/+$/, "");

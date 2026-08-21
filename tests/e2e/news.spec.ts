@@ -1,7 +1,3 @@
-// TODO(Div): provide the Playwright runner/baseURL and register `/news` in
-// the application router before enabling this suite in CI.
-// TODO(CI): install frontend dependencies before running type-check, Vitest,
-// and Playwright validation for this feature.
 import { expect, test, type Page } from "@playwright/test";
 
 const authenticatedUser = {
@@ -96,10 +92,9 @@ test.describe("news feed", () => {
   test("supports keyboard recovery at a narrow viewport", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await stubSession(page);
-    let attempts = 0;
+    let allowRecovery = false;
     await page.route("**/api/v1/news/latest*", (route) => {
-      attempts += 1;
-      if (attempts === 1) {
+      if (!allowRecovery) {
         return route.fulfill({
           status: 503,
           contentType: "application/json",
@@ -128,6 +123,7 @@ test.describe("news feed", () => {
     const retry = page.getByRole("button", { name: "Try again" });
     await retry.focus();
     await expect(retry).toBeFocused();
+    allowRecovery = true;
     await page.keyboard.press("Enter");
     await expect(page.getByRole("article")).toContainText("Markets open higher");
     await expect(page.locator("main.news-feed")).toBeVisible();

@@ -36,7 +36,10 @@ function RedirectToApplication() {
 
 export function PublicRoute({ children }: PropsWithChildren) {
   const { status } = useAuth();
-  if (status === "loading") return <p>Loading your session…</p>;
+  // Public auth screens must remain usable while the optional session probe runs.
+  // If a backend is offline, waiting here makes /login look broken until the
+  // request timeout expires. An authenticated response still redirects below.
+  if (status === "loading") return <>{children}</>;
   if (status === "authenticated") return <RedirectToApplication />;
   return <>{children}</>;
 }

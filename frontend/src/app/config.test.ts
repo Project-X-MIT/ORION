@@ -28,6 +28,9 @@ describe("application configuration", () => {
 
   it.each([
     [{ VITE_API_BASE_URL: "api/v1" }, "VITE_API_BASE_URL"],
+    [{ VITE_API_BASE_URL: "//api.orion.example/api/v1" }, "VITE_API_BASE_URL"],
+    [{ VITE_API_BASE_URL: "javascript:alert(1)" }, "VITE_API_BASE_URL"],
+    [{ VITE_API_BASE_URL: "https://user:password@api.orion.example" }, "VITE_API_BASE_URL"],
     [{ VITE_API_REQUEST_TIMEOUT_MS: "0" }, "VITE_API_REQUEST_TIMEOUT_MS"],
     [{ VITE_API_REQUEST_TIMEOUT_MS: "1.5" }, "VITE_API_REQUEST_TIMEOUT_MS"],
   ])("rejects invalid environment values", (environment, message) => {
